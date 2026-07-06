@@ -1,0 +1,42 @@
+{
+  "compliance_states": ["compliant", "non-compliant"],
+  "annotation_note": "During labelling a third 'doubt' state was available for ambiguous cases; these were adjudicated to compliant/non-compliant before release, so the distributed annotations contain only the two final states.",
+  "causes": [
+    {
+      "id": "corrupted_images",
+      "name": "Corrupted Images",
+      "description": "Images where most of the thoracic information is either absent or severely damaged, rendering the image incoherent."
+    },
+    {
+      "id": "not_a_thorax",
+      "name": "Not a Thorax",
+      "description": "Images that do not depict a thoracic region, such as X-rays of other body parts."
+    },
+    {
+      "id": "incomplete_thorax",
+      "name": "Incomplete Thorax",
+      "description": "Images where more than approximately 5% of the lung parenchyma is missing. This includes cases where significant portions of the thorax are not visible, making it impossible to perform a full assessment of the lungs and heart."
+    },
+    {
+      "id": "image_quality_problems",
+      "name": "Image Quality Problems",
+      "description": "Includes issues such as insufficient contrast or low resolution, often due to acquisition issues such as motion artifacts or exposure errors."
+    },
+    {
+      "id": "area_not_valid",
+      "name": "Area Not Valid",
+      "description": "Images where less than approximately 80% of the frame is valid thoracic content, with the invalid area typically caused by collimation problems, cropping, or acquisition artifacts. Split out of 'Image Quality Problems' as a dedicated category given its high recurrence. TODO(author): confirm the exact clinical wording before public release.",
+      "notes": "Added after the initial protocol (previously subsumed under Image Quality Problems)."
+    },
+    {
+      "id": "overlaying_objects",
+      "name": "Overlaying Objects",
+      "description": "Removable objects (e.g., defibrillation pads, stretcher bars, electrodes) that obscure significant portions of the thoracic region, potentially affecting the diagnosis and causing artifacts that interfere with image interpretation. Objects that cannot be removed, such as endotracheal tubes or pacemakers, fall under the category of support devices and are not considered non-compliant."
+    },
+    {
+      "id": "non_canonical_positions",
+      "name": "Non-Canonical Positions",
+      "description": "Images where the patient's position deviates from standard protocols, such as the head overlaying the thorax. These positional errors can make it difficult to interpret the image correctly and can introduce significant biases into the model if not addressed."
+    }
+  ]
+}

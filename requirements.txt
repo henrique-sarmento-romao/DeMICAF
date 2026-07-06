@@ -1,0 +1,16 @@
+# Core scientific stack
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+Pillow
+PyYAML
+tqdm
+
+# Deep-learning framework (CAF encoder + scoring)
+torch
+torchvision
+
+# Optional: only needed to render the cause-progress video in scripts/stats/causes.py
+# imageio[ffmpeg]

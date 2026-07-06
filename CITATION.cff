@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use the DeCaF compliance annotations or code, please cite the paper below."
+title: "DeCaF: A Compliance-Annotation Dataset for Chest Radiography"
+authors:
+  - name: "Anonymized Authors"
+preferred-citation:
+  type: conference-paper
+  title: "MICAFFe: Medical Imaging Compliance Assessment Framework for Federated Learning"
+  authors:
+    - name: "Anonymized Authors"
+  year: 2026
+  notes: "Author, venue, and DOI details will be completed upon de-anonymization."
