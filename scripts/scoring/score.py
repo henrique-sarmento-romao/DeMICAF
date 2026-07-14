@@ -17,10 +17,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from demicaf.caf.scorer import mahalanobis_distance, reference_vector
+from demicaf.utils.io import upsert_scores_csv as _upsert_scores_csv
 from sklearn.metrics import average_precision_score, roc_auc_score
-
-from data_compliance.caf.scorer import mahalanobis_distance, reference_vector
-from data_compliance.utils.io import upsert_scores_csv as _upsert_scores_csv
 
 datasets = ["CheXpert", "ChestX-ray8", "MIMIC-CXR", "PadChest"]
 picked_samples = [1, 3, 5, 10]
