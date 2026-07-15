@@ -12,7 +12,7 @@ import os
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-#: Repository root, inferred as the parent of ``src/`` (…/src/data_compliance/utils/paths.py).
+#: Repository root, inferred as the parent of ``src/`` (…/src/DeMICAF/utils/paths.py).
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: Per-dataset top-level folder names that may prefix an image path.

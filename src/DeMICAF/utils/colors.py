@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from data_compliance.utils.paths import get_repo_root
+from DeMICAF.utils.paths import get_repo_root
 
 if TYPE_CHECKING:
     from pathlib import Path

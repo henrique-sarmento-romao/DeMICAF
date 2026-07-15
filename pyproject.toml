@@ -9,6 +9,8 @@ readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = "==3.13.*"
 dependencies = [
   "ipywidgets>=8.1.8",
+  "numba>=0.61",
+  "pyiqa>=0.1.16",
   "pyyaml>=6.0.2",
 ]
 # description = "description of the project"
@@ -76,7 +78,6 @@ dev = [
     "traitlets",
     "transformers",
     "accelerate",
-    "piq",
     "huggingface-hub>=1.13.0",
     "typer>=0.16.0",
     "ollama",
@@ -202,14 +203,14 @@ disallow_untyped_defs = true
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
-addopts = "--cov=data_compliance -v --cov-report=term-missing --durations=20 --no-cov-on-fail"
+addopts = "--cov=DeMICAF -v --cov-report=term-missing --durations=20 --no-cov-on-fail"
 
 [tool.coverage.run]
 # Heavy GPU/torch training loops are exercised on the cluster, not in unit tests.
 omit = [
-  "*/data_compliance/classifier.py",
-  "*/data_compliance/caf/encoder.py",
-  "*/data_compliance/federated/client.py",
-  "*/data_compliance/federated/server.py",
-  "*/data_compliance/federated/data.py",
+  "*/DeMICAF/classifier.py",
+  "*/DeMICAF/caf/encoder.py",
+  "*/DeMICAF/federated/client.py",
+  "*/DeMICAF/federated/server.py",
+  "*/DeMICAF/federated/data.py",
 ]

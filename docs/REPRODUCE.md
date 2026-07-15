@@ -14,7 +14,7 @@ only the bundled annotations work out of the box.
 ## 0. Environment sanity check
 
 ```bash
-python -c "import data_compliance.caf.scorer, data_compliance.data.datasets, data_compliance.evaluation.auc; print('ok')"
+python -c "import DeMICAF.caf.scorer, DeMICAF.data.datasets, DeMICAF.evaluation.auc; print('ok')"
 ```
 
 ## 1. Statistics and figures (no images needed)
@@ -77,11 +77,11 @@ python -m scripts.scoring.compliance_scores --scores-csv raw_scores.csv --out-cs
 
 The scoring scripts expect pre-computed features / encoders and write their outputs to
 paths overridable via CLI flags. Evaluate any score column against the annotations with
-`data_compliance.evaluation.auc.compute_auc` (positive class = *compliant* by default);
+`DeMICAF.evaluation.auc.compute_auc` (positive class = *compliant* by default);
 use `filter_cause` to compute a per-cause AUC.
 
 ## Notes
 
-- Reproducibility relies on the global RNG seeded via `data_compliance.utils.seeding`
+- Reproducibility relies on the global RNG seeded via `DeMICAF.utils.seeding`
   and the fixed `RNG_SEED = 42` in the sampling scripts.
 - Override the repository root with `DECAF_ROOT` if running from a relocated checkout.

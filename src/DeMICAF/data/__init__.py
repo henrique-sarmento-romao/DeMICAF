@@ -1,6 +1,6 @@
 """Public dataset, augmentation, and patching APIs."""
 
-from data_compliance.data.base import (
+from DeMICAF.data.base import (
     AugmentedDataset,
     ContinuousPatchDataset,
     Dataset2D,
@@ -14,7 +14,7 @@ from data_compliance.data.base import (
     random_patch_collate,
     sliding_patch_collate,
 )
-from data_compliance.data.datasets import ChestXray, ChestXrayDataset, DatasetCXR
+from DeMICAF.data.datasets import ChestXray, ChestXrayDataset, DatasetCXR
 
 __all__ = [
     "AugmentedDataset",

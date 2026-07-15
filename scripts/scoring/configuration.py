@@ -18,15 +18,15 @@ from tqdm import tqdm
 
 matplotlib.rcParams["font.family"] = "Times New Roman"
 
-from data_compliance.caf.encoder import encode, train
-from data_compliance.caf.scorer import cosine_sim, mahalanobis
-from data_compliance.data.base import AugmentedDataset, DatasetBase, multi_view_collate
-from data_compliance.data.datasets import ChestXray, ChestXrayDataset
-from data_compliance.evaluation.auc import compute_auc
-from data_compliance.utils.io import load_features
-from data_compliance.utils.io import upsert_scores_csv as save_scores_csv
-from data_compliance.utils.paths import get_repo_root
-from data_compliance.utils.seeding import seed_worker, set_seed
+from DeMICAF.caf.encoder import encode, train
+from DeMICAF.caf.scorer import cosine_sim, mahalanobis
+from DeMICAF.data.base import AugmentedDataset, DatasetBase, multi_view_collate
+from DeMICAF.data.datasets import ChestXray, ChestXrayDataset
+from DeMICAF.evaluation.auc import compute_auc
+from DeMICAF.utils.io import load_features
+from DeMICAF.utils.io import upsert_scores_csv as save_scores_csv
+from DeMICAF.utils.paths import get_repo_root
+from DeMICAF.utils.seeding import seed_worker, set_seed
 
 study = "DataExtension"
 CONTRASTIVE_LOSSES = ["SimCLR", "CSI", "UniCon", "UniConSA"]  # , "SupCon" already computed

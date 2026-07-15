@@ -28,11 +28,11 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from data_compliance.caf.networks import ResNet2D
-from data_compliance.caf.scorer import mahalanobis
-from data_compliance.data.datasets import DatasetCXR
-from data_compliance.evaluation.auc import compute_auc
-from data_compliance.utils.paths import get_repo_root
+from DeMICAF.caf.networks import ResNet2D
+from DeMICAF.caf.scorer import mahalanobis
+from DeMICAF.data.datasets import DatasetCXR
+from DeMICAF.evaluation.auc import compute_auc
+from DeMICAF.utils.paths import get_repo_root
 
 REPO_ROOT = get_repo_root()
 ANNOTATIONS_CSV = REPO_ROOT / "data" / "annotations" / "annotated_causes.csv"

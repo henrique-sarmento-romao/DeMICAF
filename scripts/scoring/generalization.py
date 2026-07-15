@@ -12,15 +12,15 @@ from torch.utils.data import DataLoader
 from torchvision.models import ResNet18_Weights, resnet18
 from tqdm import tqdm
 
-from data_compliance.caf.encoder import encode, train
-from data_compliance.caf.scorer import mahalanobis_distance, reference_vector
-from data_compliance.data.base import AugmentedDataset, DatasetBase, RandomPatchDataset, multi_view_collate
-from data_compliance.data.datasets import ChestXray, ChestXrayDataset
-from data_compliance.evaluation.auc import compute_auc
-from data_compliance.utils.io import load_features
-from data_compliance.utils.io import upsert_scores_csv as save_scores_csv
-from data_compliance.utils.paths import get_repo_root
-from data_compliance.utils.seeding import seed_worker, set_seed
+from DeMICAF.caf.encoder import encode, train
+from DeMICAF.caf.scorer import mahalanobis_distance, reference_vector
+from DeMICAF.data.base import AugmentedDataset, DatasetBase, RandomPatchDataset, multi_view_collate
+from DeMICAF.data.datasets import ChestXray, ChestXrayDataset
+from DeMICAF.evaluation.auc import compute_auc
+from DeMICAF.utils.io import load_features
+from DeMICAF.utils.io import upsert_scores_csv as save_scores_csv
+from DeMICAF.utils.paths import get_repo_root
+from DeMICAF.utils.seeding import seed_worker, set_seed
 
 study = "CA3_TDD"
 base_datasets = ["CheXpert", "ChestX-ray8", "MIMIC-CXR", "PadChest"]

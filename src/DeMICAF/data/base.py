@@ -12,7 +12,7 @@ import torch
 from scipy.ndimage import binary_dilation, binary_erosion
 from torch.utils.data import Dataset, IterableDataset
 
-from data_compliance.caf.networks import ResNet2D, ResNet3D
+from DeMICAF.caf.networks import ResNet2D, ResNet3D
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

@@ -19,18 +19,9 @@ def reference_vector(ref_data: np.ndarray, regularization: float = 1e-5) -> tupl
         raise ValueError("ref_data must be a 2D array")
 
     n_samples, n_features = ref_data.shape
-    mean = np.mean(ref_data, axis=0)
 
-    if n_samples < 2:
-        # Degenerate case: only one sample, fall back to isotropic covariance.
-        cov = np.eye(n_features, dtype=np.float64)
-    else:
-        # For tiny sample sizes in high dimension, shrinkage covariance is more stable.
-        use_shrinkage = n_samples <= n_features
-        try:
-            cov = LedoitWolf().fit(ref_data).covariance_ if use_shrinkage else np.cov(ref_data, rowvar=False)
-        except Exception:  # noqa: BLE001 — shrinkage estimator can fail on degenerate inputs
-            cov = np.cov(ref_data, rowvar=False)
+    mean = np.mean(ref_data, axis=0)
+    cov = LedoitWolf().fit(ref_data).covariance_ if n_samples >= 2 else np.eye(n_features, dtype=np.float64)
 
     if not np.all(np.isfinite(cov)):
         cov = np.nan_to_num(cov, nan=0.0, posinf=0.0, neginf=0.0)

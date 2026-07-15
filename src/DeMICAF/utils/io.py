@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 def load_features(path: Path) -> tuple[np.ndarray, np.ndarray]:
     """Load ``(image_names, feature_matrix)`` from a compressed ``.npz`` feature file.
 
-    The array layout is the one written by :func:`data_compliance.caf.encoder.encode`:
+    The array layout is the one written by :func:`DeMICAF.caf.encoder.encode`:
     column 0 holds the image name, the remaining columns the feature vector.
     """
     arr = np.load(path, allow_pickle=True)["arr_0"]
@@ -43,7 +43,7 @@ def upsert_scores_csv(
     ).set_index(["image_path", "dataset"])
     incoming = incoming[~incoming.index.duplicated(keep="last")]
 
-    if csv_path.exists():
+    if csv_path.exists() and csv_path.stat().st_size > 0:
         base = pd.read_csv(csv_path).set_index(["image_path", "dataset"])
         base = base[~base.index.duplicated(keep="last")]
         all_index = base.index.union(incoming.index)

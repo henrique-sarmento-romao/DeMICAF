@@ -29,8 +29,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from data_compliance.caf.normalization import aggregate, fit, transform
-from data_compliance.utils.paths import get_repo_root
+from DeMICAF.caf.normalization import aggregate, fit, transform
+from DeMICAF.utils.paths import get_repo_root
 
 # The compliance score = Mahalanobis distance to the CheXpert reference prior,
 # using the "Average Weighted" federated reference scheme (matches normalization.ipynb).

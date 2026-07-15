@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as nn_functional
 from PIL import Image, ImageFile
 
-from data_compliance.caf.transforms.transforms import (
+from DeMICAF.caf.transforms.transforms import (
     Transforms,
     add_random_objects,
     adjust_exposure,
@@ -27,7 +27,7 @@ from data_compliance.caf.transforms.transforms import (
     slice_shift,
     zoom_in,
 )
-from data_compliance.data.base import Dataset2D
+from DeMICAF.data.base import Dataset2D
 
 if TYPE_CHECKING:
     from collections.abc import Callable

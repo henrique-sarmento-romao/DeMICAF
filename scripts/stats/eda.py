@@ -17,9 +17,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from data_compliance.utils.colors import COLOR_DICT
-from data_compliance.utils.paths import get_repo_root
-from data_compliance.utils.plotting import FIG_SIZE, annotate_bars, apply_thesis_style, use_thousands_axis
+from DeMICAF.utils.colors import COLOR_DICT
+from DeMICAF.utils.paths import get_repo_root
+from DeMICAF.utils.plotting import FIG_SIZE, annotate_bars, apply_thesis_style, use_thousands_axis
 
 POSITION_MAP = {
     "AP": "Frontal (AP)",

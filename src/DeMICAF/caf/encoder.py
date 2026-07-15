@@ -14,8 +14,8 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
-from data_compliance.caf.losses import NTXentLoss, SupCon, UniCon, compute_mmd, generate_uniform_samples
-from data_compliance.utils.seeding import set_seed
+from DeMICAF.caf.losses import NTXentLoss, SupCon, UniCon, compute_mmd, generate_uniform_samples
+from DeMICAF.utils.seeding import set_seed
 
 warnings.filterwarnings("ignore")
 

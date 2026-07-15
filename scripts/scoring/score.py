@@ -1,33 +1,36 @@
-"""Federated scoring with a static (frozen) encoder.
+"""Federated scoring with a static (frozen) encoder (thesis phase FA1).
 
 Each client scores its images against reference statistics that are either
-independent (encoder's own data), federated averages of client statistics
-(with optional quality-penalty weighting), or built from a few picked
-compliant samples. AUCs against the manual compliance annotations are
-exported as LaTeX tables.
-
-The chest X-ray images are **not** shipped (registration-gated source datasets);
-point the ``CXR_ROOT`` environment variable at a directory laid out as
-``<Dataset>/...`` before running.
+independent (encoder's own data), federated averages of client statistics,
+or built from a few picked compliant samples. AUCs against the manual
+compliance annotations are exported as LaTeX tables.
 """
 
 import argparse
-import os
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from demicaf.caf.scorer import mahalanobis_distance, reference_vector
-from demicaf.utils.io import upsert_scores_csv as _upsert_scores_csv
-from sklearn.metrics import average_precision_score, roc_auc_score
+from matplotlib.ticker import MaxNLocator, ScalarFormatter
+from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 
-datasets = ["CheXpert", "ChestX-ray8", "MIMIC-CXR", "PadChest"]
-picked_samples = [1, 3, 5, 10]
+from DeMICAF.caf.scorer import mahalanobis_distance, reference_vector
+from DeMICAF.utils.io import upsert_scores_csv as _upsert_scores_csv
+from DeMICAF.utils.plotting import apply_thesis_style
+
+datasets = ["CheXpert", "MIMIC-CXR", "ChestX-ray8", "PadChest"]
+picked_samples = [1, 2, 5, 10, 20, 50, 100]
 n_iter = 10
-quality_penalty_betas = [0.0, 1, 2, 5, 10, 20]
 
-workspace_root = Path(__file__).resolve().parents[2]
-data_root = Path(os.environ.get("CXR_ROOT", "data/chest_xray"))
+workspace_root = Path(__file__).resolve().parents[3]
+results_root = workspace_root / "Results" / "DeMICAF"
+data_root = Path("/eos/user/h/hpestana/CXR")
+repo_root = Path(__file__).resolve().parents[2]
+niqe_baseline_csv_path = repo_root / "Results" / "Baseline" / "perceptual_iqa_metrics.csv"
 
 
 def upsert_scores_csv(
@@ -143,6 +146,31 @@ def compute_ap(
     return ap
 
 
+def compute_fpr_at_tpr(
+    scores: np.ndarray,
+    feat_names: np.ndarray,
+    annotation_df: pd.DataFrame,
+    tpr_target: float = 0.95,
+    percentage: bool = False,
+) -> float:
+    """Compute the FPR at a fixed TPR (default 95%) for detecting non-compliant samples.
+
+    Like :func:`compute_ap`, the positive class is *non-compliant* (numeric
+    convention compliant=1, non-compliant=0), ranked directly by the Mahalanobis
+    distance, and the FPR is linearly interpolated on the ROC curve at the
+    target TPR.
+    """
+    aligned_scores, labels = _align_scores_labels(scores, feat_names, annotation_df)
+    positive = (labels == 0).astype(np.int64)  # non-compliant
+
+    fpr, tpr, _ = roc_curve(positive, aligned_scores)
+    fpr_at_tpr = float(np.interp(tpr_target, tpr, fpr))
+    if percentage:
+        fpr_at_tpr *= 100
+
+    return fpr_at_tpr
+
+
 def non_compliant_prevalence(
     feat_names: np.ndarray,
     scores: np.ndarray,
@@ -188,47 +216,26 @@ def compute_and_store_scores(
     return scores_by_client
 
 
-def quality_fraction_weights(mean_scores: dict[str, float], beta: float) -> dict[str, float]:
-    """Convert client mean scores into normalized quality weights."""
-    score_values = np.array(list(mean_scores.values()), dtype=np.float64)
-    score_values /= sum(score_values)
-    shifted_scores = -beta * score_values
-    shifted_scores -= shifted_scores.max()
-    weights = np.exp(shifted_scores)
-    total = float(weights.sum())
-    if not np.isfinite(total) or total <= 0:
-        raise ValueError(f"Unable to normalize client scores for beta={beta:g}.")
-    weights /= total
-    return {client: float(weight) for client, weight in zip(mean_scores.keys(), weights, strict=False)}
-
-
-def normalized_mixture_weights(size_values: np.ndarray, quality_values: np.ndarray) -> np.ndarray:
-    """Combine normalized size and quality fractions and renormalize the product."""
-    weights = np.asarray(size_values, dtype=np.float64) * np.asarray(quality_values, dtype=np.float64)
-    total = float(weights.sum())
-    if not np.isfinite(total) or total <= 0:
-        raise ValueError("Unable to normalize combined client weights.")
-    return weights / total
-
-
 def compute_client_metrics(
     scores_by_client: dict[str, pd.DataFrame],
     client_labels: dict[str, pd.DataFrame],
     encoder: str,
     percentage: bool = True,
     invert_labels: bool = True,
-) -> tuple[dict[str, float], dict[str, float], float]:
-    """Compute AUC and AP per dataset/holdout plus the holdout non-compliant prevalence.
+) -> tuple[dict[str, float], dict[str, float], dict[str, float], float]:
+    """Compute AUC, AP, and FPR@95TPR per dataset/holdout plus the holdout prevalence.
 
     Returns
     -------
     tuple
-        ``(aucs, aps, holdout_baseline)`` where ``aucs``/``aps`` map each dataset
-        (and ``"Holdout"``) to its metric, and ``holdout_baseline`` is the AP
-        chance level (non-compliant fraction over the held-out clients).
+        ``(aucs, aps, fprs, holdout_baseline)`` where ``aucs``/``aps``/``fprs``
+        map each dataset (and ``"Holdout"``) to its metric, and
+        ``holdout_baseline`` is the AP chance level (non-compliant fraction over
+        the held-out clients).
     """
     aucs: dict[str, float] = dict.fromkeys(datasets, np.nan)
     aps: dict[str, float] = dict.fromkeys(datasets, np.nan)
+    fprs: dict[str, float] = dict.fromkeys(datasets, np.nan)
 
     all_feat_names: list[np.ndarray] = []
     all_scores: list[np.ndarray] = []
@@ -249,6 +256,12 @@ def compute_client_metrics(
             invert_labels=invert_labels,
         )
         aps[client] = compute_ap(
+            scores=client_scores,
+            feat_names=client_feat_names,
+            annotation_df=ann_df,
+            percentage=percentage,
+        )
+        fprs[client] = compute_fpr_at_tpr(
             scores=client_scores,
             feat_names=client_feat_names,
             annotation_df=ann_df,
@@ -276,6 +289,12 @@ def compute_client_metrics(
         annotation_df=holdout_annotations,
         percentage=percentage,
     )
+    fprs["Holdout"] = compute_fpr_at_tpr(
+        scores=holdout_scores,
+        feat_names=holdout_feat_names,
+        annotation_df=holdout_annotations,
+        percentage=percentage,
+    )
     holdout_baseline = non_compliant_prevalence(
         feat_names=holdout_feat_names,
         scores=holdout_scores,
@@ -286,7 +305,8 @@ def compute_client_metrics(
     # Encoder dataset is not part of holdout clients for that row.
     aucs[encoder] = np.nan
     aps[encoder] = np.nan
-    return aucs, aps, holdout_baseline
+    fprs[encoder] = np.nan
+    return aucs, aps, fprs, holdout_baseline
 
 
 def save_metrics(
@@ -343,11 +363,7 @@ def save_metrics(
 
     method_order = [
         "Independent",
-        "Average_beta_0",
-        "Average_beta_1",
-        "Average_beta_2",
-        "Average_beta_5",
-        "Average_beta_10",
+        "Average",
         "Picked_1_Samples",
         "Picked_3_Samples",
         "Picked_5_Samples",
@@ -433,7 +449,7 @@ def export_independent_auc_table(csv_path: Path, tex_path: Path) -> None:
 
 
 def export_methods_holdout_table(csv_path: Path, tex_path: Path) -> None:
-    """Export a single Holdout table with independent, beta-sweep, and picked rows."""
+    """Export a single Holdout table with independent, average, and picked rows."""
     csv_path = Path(csv_path)
     if not csv_path.exists():
         raise FileNotFoundError(f"AUC CSV not found: {csv_path}")
@@ -459,13 +475,11 @@ def export_methods_holdout_table(csv_path: Path, tex_path: Path) -> None:
     def row(first_cell: str, second_cell: str, values: list[str]) -> str:
         return f"        {first_cell} & {second_cell} & {values[0]} & {values[1]} & {values[2]} & {values[3]} \\\\"
 
-    beta_rows = [(beta, f"Beta {beta}") if beta != 0 else (beta, "Unweighted") for beta in quality_penalty_betas]
-
     lines = [
         r"\begin{table}[ht]",
         r"    \centering",
         r"    \caption{Holdout AUC scores for static encoder \ac{CAF} implementation in \ac{FL} settings,"
-        r" varying encoder dataset and quality penalty beta.} \label{tab:static_encoder_methods_auc}",
+        r" varying encoder dataset.} \label{tab:static_encoder_methods_auc}",
         r"    \begin{tabular}{c|c|c|c|c|c}",
         r"        \hline",
         r"        \multicolumn{2}{c|}{Method} & \multicolumn{4}{c}{Encoder Training Dataset} \\",
@@ -479,14 +493,8 @@ def export_methods_holdout_table(csv_path: Path, tex_path: Path) -> None:
         + " "
         + chr(92) * 2,
         r"        \hline",
-        row("\\multirow{5}{*}{Average}", beta_rows[0][1], encoder_values("Average_beta_0")),
-        r"        \cline{2-6}",
+        "        " + "\\multicolumn{2}{c|}{Average} & " + " & ".join(encoder_values("Average")) + " " + chr(92) * 2,
     ]
-
-    for beta_value, beta_label in beta_rows[1:]:
-        lines.append(row("", beta_label, encoder_values(f"Average_beta_{beta_value:g}")))
-        if beta_value != beta_rows[-1][0]:
-            lines.append(r"        \cline{2-6}")
 
     lines.extend(
         [
@@ -514,8 +522,8 @@ def export_methods_holdout_table(csv_path: Path, tex_path: Path) -> None:
 # Pretty row labels for the scheme table, matching the thesis tables.
 scheme_train_labels = {
     "CheXpert": "CheXpert",
-    "ChestX-ray8": "ChestX-ray",
-    "MIMIC-CXR": "MIMIC",
+    "MIMIC-CXR": "MIMIC-CXR",
+    "ChestX-ray8": "ChestX-ray14",
     "PadChest": "PadChest",
 }
 
@@ -525,7 +533,6 @@ def export_scheme_table(
     tex_path: Path,
     caption: str,
     label: str,
-    weighted_beta: float = 5,
 ) -> None:
     """Export the per-train-dataset scheme table (Base./Independent/Picked/Average).
 
@@ -559,15 +566,17 @@ def export_scheme_table(
             return None
         return float(row.iloc[-1]["Baseline"])
 
-    # (method key, header label) for the seven scheme columns, in display order.
+    # (method key, header label) for the scheme columns, in display order.
     scheme_methods = [
         ("Independent", "Independent"),
         ("Picked_1_Samples", "1"),
-        ("Picked_3_Samples", "3"),
+        ("Picked_2_Samples", "2"),
         ("Picked_5_Samples", "5"),
         ("Picked_10_Samples", "10"),
-        ("Average_beta_0", "Unweighted"),
-        (f"Average_beta_{weighted_beta:g}", "Weighted"),
+        ("Picked_20_Samples", "20"),
+        ("Picked_50_Samples", "50"),
+        ("Picked_100_Samples", "100"),
+        ("Average", "Average"),
     ]
 
     def format_cells(values: list[float | None]) -> list[str]:
@@ -595,13 +604,13 @@ def export_scheme_table(
         r"    \centering",
         rf"    \caption{{{caption}}}",
         rf"    \label{{{label}}}",
-        r"    \begin{tabular}{c|c|c|c|c|c|c|c|c}",
+        r"    \begin{tabular}{c|c|c|c|c|c|c|c|c|c}",
         r"    \toprule",
-        r"    \multirow{2}{*}{\diagbox{Train}{Scheme}} & \multirow{2}{*}{\textit{Base.}}"
-        r" & \multirow{2}{*}{Independent} & \multicolumn{4}{c|}{Picked (Samples)}"
-        r" & \multicolumn{2}{c}{Average} \\",
-        r"    \cline{4-9}",
-        r"    & & & 1 & 3 & 5 & 10 & Unweighted & Weighted \\",
+        r"    \multirow{2}{*}{\diagbox{Train}{Scheme}}"
+        r" & \multirow{2}{*}{Independent} & \multicolumn{7}{c|}{Picked (Samples)}"
+        r" & \multirow{2}{*}{Average} \\",
+        r"    \cline{3-9}",
+        r"    & & 1 & 2 & 5 & 10 & 20 & 50 & 100 & \\",
         r"    \midrule",
     ]
 
@@ -609,17 +618,18 @@ def export_scheme_table(
         values = [holdout_for(method, encoder) for method, _ in scheme_methods]
         cells = format_cells(values)
 
-        baseline = baselines[encoder]
-        if constant_baseline:
-            if index == 0:
-                base_cell = r"\multirow{" + str(len(datasets)) + r"}{*}{" + f"{present_baselines[0]:.1f}" + "}"
-            else:
-                base_cell = ""
-        else:
-            base_cell = f"{baseline:.1f}" if baseline is not None else "—"
+        # baseline = baselines[encoder]
+        # if constant_baseline:
+        #     if index == 0:
+        #         base_cell = r"\multirow{" + str(len(datasets)) + r"}{*}{" + f"{present_baselines[0]:.1f}" + "}"
+        #     else:
+        #         base_cell = ""
+        # else:
+        #     base_cell = f"{baseline:.1f}" if baseline is not None else "—"
 
         train_label = scheme_train_labels.get(encoder, encoder)
-        lines.append(f"    {{{train_label}}} & {base_cell} & " + " & ".join(cells) + r" \\")
+        # lines.append(f"    {{{train_label}}} & {base_cell} & " + " & ".join(cells) + r" \\")
+        lines.append(f"    {{{train_label}}} & " + " & ".join(cells) + r" \\")
 
     lines.extend(
         [
@@ -634,6 +644,203 @@ def export_scheme_table(
     tex_path.parent.mkdir(parents=True, exist_ok=True)
     tex_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"File saved to {tex_path}.")
+
+
+# Scheme-plot line colors; linestyles keep the schemes distinguishable if the palette is unavailable.
+scheme_plot_colors = {
+    "Encoder": "#888888",
+    "Full": "#64C7EA",
+    "Compliant": "#7BDA19",
+    "Prevalence": "#000000",
+    "NIQE": "#A6A0F5",
+}
+
+# Legend entries grouped under the "Baseline" title instead of "Reference".
+baseline_legend_labels = ("NIQE",)
+
+
+def export_scheme_plot(
+    csv_path: Path,
+    plot_path: Path,
+    ylabel: str,
+    baseline_csv_path: Path | None = None,
+    baseline_column: str = "niqe_auc",
+    show_prevalence: bool = False,
+) -> None:
+    """Export the per-prior-dataset scheme figure (reference lines + picked-sample curve).
+
+    One subplot per prior (encoder training) dataset, titled with its name. The
+    Independent (``Encoder Reference``) and average schemes are horizontal
+    reference lines; the picked scheme is a curve of the Holdout metric over
+    the number of picked compliant samples, with a band of ±1 standard
+    deviation across the picking iterations.
+
+    When ``baseline_csv_path`` is given, the NIQE holdout value of each encoder
+    dataset (its ``"<dataset> Holdout"`` row, ``baseline_column``) is drawn as a
+    dashed horizontal baseline, and the legend is split into titled
+    ``Reference`` and ``Baseline`` groups. ``show_prevalence`` additionally
+    draws the per-encoder ``Baseline`` column of ``csv_path`` (the label
+    prevalence, i.e. the AP chance level) as a solid black baseline.
+    """
+    csv_path = Path(csv_path)
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Metrics CSV not found: {csv_path}")
+
+    niqe_baselines: dict[str, float] = {}
+    if baseline_csv_path is not None:
+        baseline_csv_path = Path(baseline_csv_path)
+        if not baseline_csv_path.exists():
+            raise FileNotFoundError(f"Baseline metrics CSV not found: {baseline_csv_path}")
+        baseline_df = pd.read_csv(baseline_csv_path)
+        for encoder in datasets:
+            row = baseline_df[baseline_df["set"] == f"{encoder} Holdout"]
+            if not row.empty and not pd.isna(row.iloc[-1][baseline_column]):
+                niqe_baselines[encoder] = float(row.iloc[-1][baseline_column])
+
+    df = pd.read_csv(csv_path)
+    required_columns = ["method", "encoder", "Holdout"]
+    missing = [column for column in required_columns if column not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns for scheme plot: {missing}")
+
+    def holdout_for(method: str, encoder: str) -> float | None:
+        row = df[(df["method"] == method) & (df["encoder"] == encoder)]
+        if row.empty or pd.isna(row.iloc[-1]["Holdout"]):
+            return None
+        return float(row.iloc[-1]["Holdout"])
+
+    def prevalence_for(encoder: str) -> float | None:
+        if "Baseline" not in df.columns:
+            return None
+        row = df[df["encoder"] == encoder]
+        if row.empty or pd.isna(row.iloc[-1]["Baseline"]):
+            return None
+        return float(row.iloc[-1]["Baseline"])
+
+    # (legend label, method key, linestyle) for the horizontal reference lines.
+    reference_lines = [
+        ("Encoder", "Independent", "-"),
+        ("Full", "Average", "-"),
+    ]
+
+    apply_thesis_style()
+    fig, axes = plt.subplots(1, len(datasets), figsize=(9, 2.5), sharey=True)
+
+    for ax, encoder in zip(axes, datasets, strict=True):
+        for label, method, linestyle in reference_lines:
+            value = holdout_for(method, encoder)
+            if value is not None:
+                ax.axhline(value, color=scheme_plot_colors[label], linestyle=linestyle, linewidth=1.8, label=label)
+
+        picked_points = [
+            (
+                n_samples,
+                holdout_for(f"Picked_{n_samples}_Samples", encoder),
+                holdout_for(f"Picked_{n_samples}_Samples_std", encoder),
+            )
+            for n_samples in picked_samples
+        ]
+        picked_points = [(n_samples, value, std) for n_samples, value, std in picked_points if value is not None]
+        if picked_points:
+            x_values, y_values, std_values = zip(*picked_points, strict=True)
+            ax.plot(
+                x_values,
+                y_values,
+                color=scheme_plot_colors["Compliant"],
+                marker="o",
+                markersize=4,
+                linewidth=1.8,
+                label="Compliant",
+            )
+            if all(std is not None for std in std_values):
+                means = np.asarray(y_values, dtype=np.float64)
+                stds = np.asarray(std_values, dtype=np.float64)
+                ax.fill_between(
+                    x_values,
+                    means - stds,
+                    means + stds,
+                    color=scheme_plot_colors["Compliant"],
+                    alpha=0.2,
+                    linewidth=0,
+                )
+
+        baseline_value = niqe_baselines.get(encoder)
+        if baseline_value is not None:
+            ax.axhline(
+                baseline_value,
+                color=scheme_plot_colors["NIQE"],
+                linestyle="--",
+                linewidth=1.8,
+                label="NIQE",
+            )
+
+        if show_prevalence:
+            prevalence_value = prevalence_for(encoder)
+            if prevalence_value is not None:
+                ax.axhline(
+                    prevalence_value,
+                    color=scheme_plot_colors["Prevalence"],
+                    linestyle="-",
+                    linewidth=1.8,
+                    label="Prevalence",
+                )
+
+        ax.set_title(scheme_train_labels.get(encoder, encoder),fontsize=plt.rcParams["axes.labelsize"])
+        ax.set_xscale("log")
+        ax.set_xticks(picked_samples)
+        ax.xaxis.set_major_formatter(ScalarFormatter())
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=8, min_n_ticks=8))
+        ax.minorticks_off()
+        ax.grid(alpha=0.15)
+
+    axes[0].set_ylabel(ylabel)
+
+    # Legends, deduplicated across subplots in plot order.
+    handles: list = []
+    labels: list[str] = []
+    for ax in axes:
+        for handle, label in zip(*ax.get_legend_handles_labels(), strict=True):
+            if label not in labels:
+                handles.append(handle)
+                labels.append(label)
+
+    grouped = {label: (handle, label) for handle, label in zip(handles, labels, strict=True)}
+    prevalence_entries = [grouped.pop("Prevalence")] if "Prevalence" in grouped else []
+    baseline_entries = [grouped.pop(label) for label in baseline_legend_labels if label in grouped]
+    reference_entries = list(grouped.values())
+
+    # Legend groups below the figure, left to right: the untitled, frameless
+    # prevalence chance level (not a baseline method), then the titled
+    # "Reference" and "Baseline" groups.
+    legend_groups: list[tuple[list, str | None, bool]] = []
+    if reference_entries:
+        legend_groups.append((reference_entries, "Reference", True))
+    if baseline_entries:
+        legend_groups.append((baseline_entries, "Baseline", True))
+    if prevalence_entries:
+        legend_groups.append((prevalence_entries, " ", False))
+
+    group_anchors = {1: (0.5,), 2: (0.865, 0.505), 3: (0.865, 0.505, 0.365)}[len(legend_groups)]
+    for (entries, title, frameon), anchor in zip(legend_groups, group_anchors, strict=True):
+        fig.legend(
+            [handle for handle, _ in entries],
+            [label for _, label in entries],
+            loc="upper left",
+            bbox_to_anchor=(0.865, anchor),
+            ncol=1,
+            frameon=frameon,
+            title=title,
+        )
+    fig.tight_layout(rect=(-0.01, 0, 0.88, 0.97))
+    fig.suptitle("Prior Dataset", y=0.995)#, fontsize=plt.rcParams["axes.labelsize"])
+    fig.supxlabel("Number of Compliant Samples", y=0, fontsize=plt.rcParams["axes.labelsize"])
+
+
+    plot_path = Path(plot_path)
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(plot_path, dpi=300)
+    plt.close(fig)
+    print(f"File saved to {plot_path}.")
 
 
 def main():
@@ -657,14 +864,18 @@ def main():
     subsets = ["1k", "10k", "100k"] if args.subset is None else [args.subset]
 
     for subset in subsets:
-        csv_path = workspace_root / f"Results/StaticEncoder/{subset}_AUCs.csv"
-        ap_csv_path = workspace_root / f"Results/StaticEncoder/{subset}_APs.csv"
-        mahala_scores_csv_path = workspace_root / f"Results/StaticEncoder/{subset}_MahalaScores.csv"
-        chi_scores_csv_path = workspace_root / f"Results/StaticEncoder/{subset}_ChiScores.csv"
-        independent_tex_output_path = workspace_root / f"Results/StaticEncoder/{subset}_auc_independent.tex"
-        methods_tex_output_path = workspace_root / f"Results/StaticEncoder/{subset}_auc_methods.tex"
-        scheme_auc_tex_output_path = workspace_root / f"Results/StaticEncoder/{subset}_scheme_auc.tex"
-        scheme_ap_tex_output_path = workspace_root / f"Results/StaticEncoder/{subset}_scheme_ap.tex"
+        csv_path = results_root / f"{subset}_AUCs.csv"
+        ap_csv_path = results_root / f"{subset}_APs.csv"
+        fpr_csv_path = results_root / f"{subset}_FPR95s.csv"
+        mahala_scores_csv_path = results_root / f"{subset}_MahalaScores.csv"
+        chi_scores_csv_path = results_root / f"{subset}_ChiScores.csv"
+        independent_tex_output_path = results_root / f"{subset}_auc_independent.tex"
+        methods_tex_output_path = results_root / f"{subset}_auc_methods.tex"
+        scheme_auc_tex_output_path = results_root / f"{subset}_scheme_auc.tex"
+        scheme_ap_tex_output_path = results_root / f"{subset}_scheme_ap.tex"
+        scheme_auc_plot_output_path = results_root / "demicaf_auc.png"
+        scheme_ap_plot_output_path = results_root / "demicaf_ap.png"
+        scheme_fpr_plot_output_path = results_root / "demicaf_fpr.png"
 
         if run_compute:
             for encoder in datasets:
@@ -741,7 +952,7 @@ def main():
                         chi=True,
                         scores_output_csv_path=chi_scores_csv_path,
                     )
-                    independent_aucs, independent_aps, independent_baseline = compute_client_metrics(
+                    independent_aucs, independent_aps, independent_fprs, independent_baseline = compute_client_metrics(
                         scores_by_client=independent_scores,
                         client_labels=client_labels,
                         encoder=encoder,
@@ -754,81 +965,80 @@ def main():
                         values=independent_aps,
                         baseline=independent_baseline,
                     )
+                    save_metrics(
+                        csv_path=fpr_csv_path,
+                        method_name=method_name,
+                        encoder=encoder,
+                        values=independent_fprs,
+                        baseline=95.0,
+                    )
 
                 """
                 AVERAGE
                 -------------------------------------------------
                 Reference vector is the average of clients data.
                 """
-                mean_scores = {
-                    client: float(score_df["score"].mean()) for client, score_df in independent_scores.items()
-                }
                 client_stats = []
                 for client, feats in client_feats.items():
                     feats_values = feats[:, 1:].astype(np.float32)
-                    print(feats_values.shape)
                     mu, cov = reference_vector(feats_values)
                     client_stats.append((client, mu, cov, feats_values.shape[0]))
 
                 size_values = np.array([n_i for _, _, _, n_i in client_stats], dtype=np.float64)
-                size_fractions = size_values / size_values.sum()
-                beta_quality_scores = {
-                    beta: quality_fraction_weights(mean_scores, beta) for beta in quality_penalty_betas
-                }
+                weights = size_values / size_values.sum()
 
-                for quality_penalty_beta in quality_penalty_betas:
-                    method_name = f"Average_beta_{quality_penalty_beta:g}"
-                    print(f"Method: {method_name.replace('_', ' ')}")
+                method_name = "Average"
+                print(f"Method: {method_name}")
 
-                    quality_values = np.array(
-                        [beta_quality_scores[quality_penalty_beta][client] for client, _, _, _ in client_stats],
-                        dtype=np.float64,
-                    )
-                    weights = normalized_mixture_weights(size_fractions, quality_values)
-                    # print(weights)
+                means = np.array([mu for _, mu, _, _ in client_stats])
+                covs = np.array([cov for _, _, cov, _ in client_stats])
 
-                    means = np.array([mu for _, mu, _, _ in client_stats])
-                    covs = np.array([cov for _, _, cov, _ in client_stats])
+                global_mean = np.sum(weights[:, None] * means, axis=0)
+                d = means.shape[1]
+                global_cov = np.zeros((d, d))
 
-                    global_mean = np.sum(weights[:, None] * means, axis=0)
-                    d = means.shape[1]
-                    global_cov = np.zeros((d, d))
+                for w_i, mu_i, cov_i in zip(weights, means, covs, strict=False):
+                    diff = (mu_i - global_mean).reshape(-1, 1)
+                    global_cov += w_i * (cov_i + diff @ diff.T)
 
-                    for w_i, mu_i, cov_i in zip(weights, means, covs, strict=False):
-                        diff = (mu_i - global_mean).reshape(-1, 1)
-                        global_cov += w_i * (cov_i + diff @ diff.T)
+                ref_vectors, ref_covmats = [global_mean], [global_cov]
 
-                    ref_vectors, ref_covmats = [global_mean], [global_cov]
-
-                    method_scores = compute_and_store_scores(
-                        ref_vectors,
-                        ref_covmats,
-                        client_feats,
-                        tag=f"{encoder}_{method_name}_mahala",
-                        chi=False,
-                        scores_output_csv_path=mahala_scores_csv_path,
-                    )
-                    compute_and_store_scores(
-                        ref_vectors,
-                        ref_covmats,
-                        client_feats,
-                        tag=f"{encoder}_{method_name}_chi",
-                        chi=True,
-                        scores_output_csv_path=chi_scores_csv_path,
-                    )
-                    method_aucs, method_aps, method_baseline = compute_client_metrics(
-                        scores_by_client=method_scores,
-                        client_labels=client_labels,
-                        encoder=encoder,
-                    )
-                    save_metrics(csv_path=csv_path, method_name=method_name, encoder=encoder, values=method_aucs)
-                    save_metrics(
-                        csv_path=ap_csv_path,
-                        method_name=method_name,
-                        encoder=encoder,
-                        values=method_aps,
-                        baseline=method_baseline,
-                    )
+                method_scores = compute_and_store_scores(
+                    ref_vectors,
+                    ref_covmats,
+                    client_feats,
+                    tag=f"{encoder}_{method_name}_mahala",
+                    chi=False,
+                    scores_output_csv_path=mahala_scores_csv_path,
+                )
+                compute_and_store_scores(
+                    ref_vectors,
+                    ref_covmats,
+                    client_feats,
+                    tag=f"{encoder}_{method_name}_chi",
+                    chi=True,
+                    scores_output_csv_path=chi_scores_csv_path,
+                )
+                method_aucs, method_aps, method_fprs, method_baseline = compute_client_metrics(
+                    scores_by_client=method_scores,
+                    client_labels=client_labels,
+                    encoder=encoder,
+                )
+                save_metrics(csv_path=csv_path, method_name=method_name, encoder=encoder, values=method_aucs)
+                save_metrics(
+                    csv_path=ap_csv_path,
+                    method_name=method_name,
+                    encoder=encoder,
+                    values=method_aps,
+                    baseline=method_baseline,
+                )
+                save_metrics(
+                    csv_path=fpr_csv_path,
+                    method_name=method_name,
+                    encoder=encoder,
+                    values=method_fprs,
+                    baseline=95.0,
+                )
 
                 """
                 PICKED
@@ -841,6 +1051,7 @@ def main():
                     print(f"Method: {method_name.replace('_', ' ')}")
                     client_aucs_iter: dict[str, list[float]] = {}
                     client_aps_iter: dict[str, list[float]] = {}
+                    client_fprs_iter: dict[str, list[float]] = {}
                     baselines_iter: list[float] = []
 
                     for _i in range(n_iter):
@@ -873,7 +1084,7 @@ def main():
                             chi=True,
                             scores_output_csv_path=chi_scores_csv_path,
                         )
-                        client_aucs, client_aps, iter_baseline = compute_client_metrics(
+                        client_aucs, client_aps, client_fprs, iter_baseline = compute_client_metrics(
                             scores_by_client=iter_scores,
                             client_labels=client_labels,
                             encoder=encoder,
@@ -883,17 +1094,50 @@ def main():
                             client_aucs_iter.setdefault(client, []).append(auc)
                         for client, ap in client_aps.items():
                             client_aps_iter.setdefault(client, []).append(ap)
+                        for client, fpr in client_fprs.items():
+                            client_fprs_iter.setdefault(client, []).append(fpr)
                         baselines_iter.append(iter_baseline)
 
                     client_aucs = {client: float(np.mean(aucs)) for client, aucs in client_aucs_iter.items()}
                     client_aps = {client: float(np.mean(aps)) for client, aps in client_aps_iter.items()}
+                    client_fprs = {client: float(np.mean(fprs)) for client, fprs in client_fprs_iter.items()}
+                    client_auc_stds = {client: float(np.std(aucs)) for client, aucs in client_aucs_iter.items()}
+                    client_ap_stds = {client: float(np.std(aps)) for client, aps in client_aps_iter.items()}
+                    client_fpr_stds = {client: float(np.std(fprs)) for client, fprs in client_fprs_iter.items()}
                     save_metrics(csv_path=csv_path, method_name=method_name, encoder=encoder, values=client_aucs)
+                    save_metrics(
+                        csv_path=csv_path,
+                        method_name=f"{method_name}_std",
+                        encoder=encoder,
+                        values=client_auc_stds,
+                    )
                     save_metrics(
                         csv_path=ap_csv_path,
                         method_name=method_name,
                         encoder=encoder,
                         values=client_aps,
                         baseline=float(np.mean(baselines_iter)),
+                    )
+                    save_metrics(
+                        csv_path=ap_csv_path,
+                        method_name=f"{method_name}_std",
+                        encoder=encoder,
+                        values=client_ap_stds,
+                        baseline=float(np.mean(baselines_iter)),
+                    )
+                    save_metrics(
+                        csv_path=fpr_csv_path,
+                        method_name=method_name,
+                        encoder=encoder,
+                        values=client_fprs,
+                        baseline=95.0,
+                    )
+                    save_metrics(
+                        csv_path=fpr_csv_path,
+                        method_name=f"{method_name}_std",
+                        encoder=encoder,
+                        values=client_fpr_stds,
+                        baseline=95.0,
                     )
 
         if run_report:
@@ -918,6 +1162,30 @@ def main():
                 ),
                 label="tab:static_encoder_scheme_ap",
             )
+            export_scheme_plot(
+                csv_path=csv_path,
+                plot_path=scheme_auc_plot_output_path,
+                ylabel="AUC (%)",
+                baseline_csv_path=niqe_baseline_csv_path,
+            )
+            export_scheme_plot(
+                csv_path=ap_csv_path,
+                plot_path=scheme_ap_plot_output_path,
+                ylabel="Average Precision (%)",
+                baseline_csv_path=niqe_baseline_csv_path,
+                baseline_column="niqe_ap",
+                show_prevalence=True,
+            )
+            if fpr_csv_path.exists():
+                export_scheme_plot(
+                    csv_path=fpr_csv_path,
+                    plot_path=scheme_fpr_plot_output_path,
+                    ylabel="FPR@95TPR (%)",
+                    baseline_csv_path=niqe_baseline_csv_path,
+                    baseline_column="niqe_fpr95",
+                )
+            else:
+                print(f"Skipping FPR plot: {fpr_csv_path} not found (run with --compute first).")
 
 
 if __name__ == "__main__":

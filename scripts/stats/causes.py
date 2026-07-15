@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Any, cast
 import matplotlib.pyplot as plt
 import numpy as np
 
-from data_compliance.utils.colors import COLOR_DICT
-from data_compliance.utils.paths import get_repo_root
+from DeMICAF.utils.colors import COLOR_DICT
+from DeMICAF.utils.paths import get_repo_root
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
