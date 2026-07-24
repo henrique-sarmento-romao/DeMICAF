@@ -3,10 +3,15 @@ import copy
 import datetime
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 import torch.multiprocessing as mp
+from matplotlib.transforms import Bbox
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision.models import ResNet18_Weights, resnet18
@@ -16,13 +21,15 @@ from DeMICAF.caf.encoder import encode, train
 from DeMICAF.caf.scorer import mahalanobis_distance, reference_vector
 from DeMICAF.data.base import AugmentedDataset, DatasetBase, RandomPatchDataset, multi_view_collate
 from DeMICAF.data.datasets import ChestXray, ChestXrayDataset
-from DeMICAF.evaluation.auc import compute_auc
+from DeMICAF.evaluation.auc import compute_auc, compute_fpr_at_tpr
+from DeMICAF.utils.colors import COLOR_DICT
 from DeMICAF.utils.io import load_features
 from DeMICAF.utils.io import upsert_scores_csv as save_scores_csv
 from DeMICAF.utils.paths import get_repo_root
+from DeMICAF.utils.plotting import apply_thesis_style
 from DeMICAF.utils.seeding import seed_worker, set_seed
 
-study = "CA3_TDD"
+study = "Generalization"
 base_datasets = ["CheXpert", "ChestX-ray8", "MIMIC-CXR", "PadChest"]
 framework = "SupCon"
 batch_size = 256
@@ -225,6 +232,278 @@ def export_scaling_table(subset_tables: dict, caption: str, label: str, outdir: 
     # Output to file (optional: could return as string)
     out_path = outdir / "auc_scaling.tex"
     out_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+#: Canonical display order for datasets across the generalization figures;
+#: each list below is filtered down from this fixed order.
+generalization_dataset_order = ["ImageNet", "CheXpert", "MIMIC-CXR", "ChestX-ray8", "PadChest", "All", "Holdout"]
+
+#: Pretty labels for datasets whose display name differs from the internal key.
+generalization_dataset_labels = {"ChestX-ray8": "ChestX-ray14"}
+
+#: Short x-tick abbreviations for the D_E encoder training datasets, keyed to
+#: the internal dataset name (not the display label).
+generalization_dataset_abbrev = {
+    "ImageNet": "IN",
+    "CheXpert": "CX",
+    "MIMIC-CXR": "MM",
+    "ChestX-ray8": "C14",
+    "PadChest": "PC",
+    "All": "All",
+}
+
+
+def _display_label(name: str) -> str:
+    return generalization_dataset_labels.get(name, name)
+
+
+#: Scoring (client) datasets D_k plotted as series -- always all six, so a
+#: dataset's line color is stable across every generalization figure.
+generalization_scoring_datasets = [
+    name for name in generalization_dataset_order if name in [*base_datasets, "All", "Holdout"]
+]
+
+#: D_E encoder training datasets, in canonical order. ImageNet only has a
+#: Self reference (an untrained encoder has no "own" data to be a Prior for),
+#: so the Prior domain below drops it.
+generalization_de_domain = [
+    name for name in generalization_dataset_order if name in [*base_datasets, "ImageNet", "All"]
+]
+
+#: (display label, Reference value, D_E x-axis domain) per reference scheme.
+generalization_reference_specs = [
+    ("Prior", "Encoder", [name for name in generalization_de_domain if name != "ImageNet"]),
+    ("Adaptive", "Self", generalization_de_domain),
+]
+
+
+def export_generalization_plots(
+    auc_csv_path: Path,
+    fpr_csv_path: Path,
+    plot_dir: Path,
+    subset: str,
+) -> None:
+    r"""Plot generalization AUC / FPR@95TPR against the encoder training data.
+
+    Four figures are produced -- (Prior, Adaptive) reference x (AUC, FPR@95TPR)
+    metric. The x-axis is the encoder training data :math:`\mathcal{D}_E`; one
+    line per scoring (client) data :math:`\mathcal{D}_k`
+    (:data:`generalization_scoring_datasets`), colored consistently with the
+    rest of the thesis figures (:data:`DeMICAF.utils.colors.COLOR_DICT`). AUC
+    lines are solid, FPR@95TPR lines are dashed.
+
+    The Prior/Adaptive pair for each metric shares one y-axis scale (AUC on
+    the left, FPR@95TPR on the right); only the outer panel of each pair
+    (Prior AUC, Adaptive FPR@95TPR) draws its tick labels, so the four images
+    compose into a single labeled row of subfigures.
+    """
+    metric_specs = [
+        ("auc", auc_csv_path, "AUC (%)", "-"),
+        ("fpr95", fpr_csv_path, "FPR@95TPR (%)", "--"),
+    ]
+
+    apply_thesis_style()
+
+    dataframes: dict[str, pd.DataFrame] = {}
+    for metric_key, csv_path, _, _ in metric_specs:
+        csv_path = Path(csv_path)
+        if not csv_path.exists():
+            print(f"Skipping generalization plots: {csv_path} not found (run with --auc first).")
+            return
+        df = pd.read_csv(csv_path)
+        required_columns = ["Reference", "Encoder", *generalization_scoring_datasets]
+        missing = [column for column in required_columns if column not in df.columns]
+        if missing:
+            raise ValueError(f"Missing required columns for generalization plot in {csv_path}: {missing}")
+        dataframes[metric_key] = df
+
+    def series_values(df: pd.DataFrame, reference_mode: str, d_e_values: list[str], d_k: str) -> list[float]:
+        values = []
+        for d_e in d_e_values:
+            row = df[(df["Reference"] == reference_mode) & (df["Encoder"] == d_e)]
+            value = row.iloc[-1][d_k] if not row.empty else None
+            values.append(float(value) * 100 if pd.notna(value) else np.nan)
+        return values
+
+    def metric_ylim(metric_key: str) -> tuple[float, float]:
+        df = dataframes[metric_key]
+        all_values = [
+            value
+            for _, reference_mode, d_e_values in generalization_reference_specs
+            for d_k in generalization_scoring_datasets
+            for value in series_values(df, reference_mode, d_e_values, d_k)
+            if pd.notna(value)
+        ]
+        low, high = min(all_values), max(all_values)
+        pad = (high - low) * 0.08 or 1.0
+        return low - pad, high + pad
+
+    ylims = {metric_key: metric_ylim(metric_key) for metric_key, _, _, _ in metric_specs}
+
+    for metric_key, _, ylabel, linestyle in metric_specs:
+        df = dataframes[metric_key]
+        is_fpr = metric_key == "fpr95"
+
+        for ref_label, reference_mode, d_e_values in generalization_reference_specs:
+            fig, ax = plt.subplots(figsize=(2, 2))
+            x_positions = list(range(len(d_e_values)))
+
+            for d_k in generalization_scoring_datasets:
+                y_values = series_values(df, reference_mode, d_e_values, d_k)
+                ax.plot(
+                    x_positions,
+                    y_values,
+                    color=COLOR_DICT.get(d_k, (0.5, 0.5, 0.5)),
+                    linestyle=linestyle,
+                    marker="o",
+                    markersize=4,
+                    linewidth=1.8,
+                    label=d_k,
+                )
+
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels([generalization_dataset_abbrev[d_e] for d_e in d_e_values])
+            # ax.set_xlabel(r"$\mathcal{D}_E$")
+            # plt.setp(ax.get_xticklabels(), rotation=00, ha="right")
+            ax.set_ylim(*ylims[metric_key])
+            ax.grid(alpha=0.15)
+
+            # Only the outer panel of each metric's Prior/Adaptive pair labels its axis.
+            show_labels = (ref_label == "Adaptive") if is_fpr else (ref_label == "Prior")
+            if is_fpr:
+                ax.yaxis.tick_right()
+                ax.yaxis.set_label_position("right")
+                ax.tick_params(labelright=show_labels)
+            else:
+                ax.tick_params(labelleft=show_labels)
+            if show_labels:
+                ax.set_ylabel(ylabel)
+
+            plot_path = Path(plot_dir) / f"generalization_{ref_label.lower()}_{metric_key}_{subset}.pdf"
+            plot_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.tight_layout()
+            fig.canvas.draw()
+            tight_bbox = fig.get_tightbbox(fig.canvas.get_renderer())
+            expanded_bbox = Bbox.from_extents(tight_bbox.x0, tight_bbox.y0, tight_bbox.x1, tight_bbox.y1)
+            fig.savefig(plot_path, dpi=300, bbox_inches=expanded_bbox)
+            plt.close(fig)
+            print(f"File saved to {plot_path}.")
+
+
+def export_generalization_csv(
+    auc_csv_path: Path,
+    fpr_csv_path: Path,
+    csv_path: Path,
+) -> None:
+    """Export the combined AUC + FPR@95TPR table underlying :func:`export_generalization_plots`.
+
+    Merges the ``auc_csv_path``/``fpr_csv_path`` tables (each ``Reference, Encoder``
+    plus one column per scoring dataset) on ``(Reference, Encoder)`` into one wide
+    table with a ``<dataset>_auc`` / ``<dataset>_fpr95`` column pair per scoring dataset.
+    """
+    auc_csv_path = Path(auc_csv_path)
+    fpr_csv_path = Path(fpr_csv_path)
+    for path in (auc_csv_path, fpr_csv_path):
+        if not path.exists():
+            raise FileNotFoundError(f"Metrics CSV not found: {path}")
+
+    auc_df = pd.read_csv(auc_csv_path)
+    fpr_df = pd.read_csv(fpr_csv_path)
+    value_columns = [column for column in auc_df.columns if column not in ("Reference", "Encoder")]
+
+    merged = auc_df.merge(fpr_df, on=["Reference", "Encoder"], suffixes=("_auc", "_fpr95"))
+    ordered_columns = ["Reference", "Encoder"] + [
+        f"{dataset}_{metric}" for dataset in value_columns for metric in ("auc", "fpr95")
+    ]
+    merged = merged[ordered_columns]
+
+    csv_path = Path(csv_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(csv_path, index=False)
+    print(f"File saved to {csv_path}.")
+
+
+def export_generalization_legend(plot_dir: Path) -> None:
+    r"""Export the standalone legend shared by the generalization figures.
+
+    Meant to be placed once above the row of the four Prior/Adaptive x
+    AUC/FPR@95TPR generalization figures produced by
+    :func:`export_generalization_plots`: two rows of separate, equally-styled
+    and titled legend groups. The top row holds, side by side and centered as
+    a pair, one color entry per scoring dataset :math:`\mathcal{D}_k`
+    (:data:`generalization_scoring_datasets`) under "$\\mathcal{D}_k$" and the
+    two linestyle entries (AUC solid, FPR@95TPR dashed) under "Metric". The
+    bottom row holds the D_E abbreviation key
+    (:data:`generalization_de_domain`) under "$\\mathcal{D}_E$", centered on
+    its own.
+    """
+    apply_thesis_style()
+
+    de_handles = [plt.Line2D([], [], linestyle="none") for _ in generalization_de_domain]
+    de_labels = [f"{generalization_dataset_abbrev[d_e]} = {_display_label(d_e)}" for d_e in generalization_de_domain]
+
+    dk_handles = [
+        plt.Line2D(
+            [0],
+            [0],
+            color=COLOR_DICT.get(d_k, (0.5, 0.5, 0.5)),
+            linestyle="-",
+            marker="o",
+            markersize=4,
+            linewidth=1.8,
+        )
+        for d_k in generalization_scoring_datasets
+    ]
+    dk_labels = [_display_label(d_k) for d_k in generalization_scoring_datasets]
+
+    style_handles = [
+        plt.Line2D([0], [0], color="black", linestyle="-", linewidth=1.8),
+        plt.Line2D([0], [0], color="black", linestyle="--", linewidth=1.8),
+    ]
+    style_labels = ["AUC", "FPR@95TPR"]
+
+    fig = plt.figure(figsize=(13, 1.0))
+    # Placed at a shared, arbitrary anchor first -- real (title- and
+    # entry-count-dependent) sizes are only known after a draw, so a fixed
+    # guessed layout would drift out of sync whenever entries change.
+    dk_legend = fig.legend(
+        dk_handles, dk_labels, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=len(dk_handles), frameon=True,
+        title=r"$\mathcal{D}^{(1)}$",
+    )
+    metric_legend = fig.legend(
+        style_handles, style_labels, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=len(style_handles),
+        frameon=True, title="Metric",
+    )
+    de_legend = fig.legend(
+        de_handles, de_labels, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=len(de_handles), frameon=True,
+        title=r"$\mathcal{D}_E$", handlelength=0, handletextpad=0,
+    )
+
+    fig.canvas.draw()
+    gap = 0.015
+    vgap = 0.05
+
+    # Row 1: D_k and Metric, side by side, centered as a pair.
+    w_dk = dk_legend.get_window_extent().width / fig.bbox.width
+    w_metric = metric_legend.get_window_extent().width / fig.bbox.width
+    row1_height = max(dk_legend.get_window_extent().height, metric_legend.get_window_extent().height) / fig.bbox.height
+    x = 0.5 - (w_dk + gap + w_metric) / 2
+    dk_legend.set_bbox_to_anchor((x + w_dk / 2, 1.0), transform=fig.transFigure)
+    x += w_dk + gap
+    metric_legend.set_bbox_to_anchor((x + w_metric / 2, 1.0), transform=fig.transFigure)
+
+    # Row 2: D_E, centered on its own, below row 1.
+    de_legend.set_bbox_to_anchor((0.5, 1.0 - row1_height - vgap), transform=fig.transFigure)
+    fig.canvas.draw()
+
+    plot_path = Path(plot_dir) / "generalization_legend.pdf"
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    tight_bbox = Bbox.union(
+        [dk_legend.get_window_extent(), metric_legend.get_window_extent(), de_legend.get_window_extent()]
+    ).transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(plot_path, dpi=300, bbox_inches=tight_bbox)
+    plt.close(fig)
+    print(f"File saved to {plot_path}.")
 
 
 def main() -> None:
@@ -564,6 +843,7 @@ def main() -> None:
             annotations_df["dataset"] = annotations_df["image_path"].str.split("/").str[0]
 
             auc_rows = []
+            fpr_rows = []
             for encoder_name in encoder_names:
                 for reference_mode in ["Encoder", "Self"]:
                     if reference_mode == "Encoder" and encoder_name not in [*base_datasets, "All"]:
@@ -573,6 +853,7 @@ def main() -> None:
                     focused_scores = scores_df.rename(columns={scoring_method: "score"})
 
                     auc_row = {"Reference": reference_mode, "Encoder": encoder_name}
+                    fpr_row = {"Reference": reference_mode, "Encoder": encoder_name}
                     for test_data in [*base_datasets, "All"]:
                         filtered_scores = focused_scores.loc[focused_scores["dataset"] == test_data]
 
@@ -585,6 +866,9 @@ def main() -> None:
                         auc_row[test_data] = compute_auc(
                             filtered_annotations, filtered_scores, percentage=False, invert_labels=False
                         )
+                        fpr_row[test_data] = compute_fpr_at_tpr(
+                            filtered_annotations, filtered_scores, percentage=False, invert_labels=False
+                        )
 
                     if encoder_name in base_datasets:
                         filtered_scores = focused_scores.loc[focused_scores["dataset"] == f"{encoder_name}_Holdout"]
@@ -592,11 +876,18 @@ def main() -> None:
                         auc_row["Holdout"] = compute_auc(
                             filtered_annotations, filtered_scores, percentage=False, invert_labels=False
                         )
+                        fpr_row["Holdout"] = compute_fpr_at_tpr(
+                            filtered_annotations, filtered_scores, percentage=False, invert_labels=False
+                        )
                     else:
                         auc_row["Holdout"] = None
+                        fpr_row["Holdout"] = None
                     auc_rows.append(auc_row)
+                    fpr_rows.append(fpr_row)
             auc = pd.DataFrame(auc_rows, columns=["Reference", "Encoder", *base_datasets, "All", "Holdout"])
             auc.to_csv(results_root / f"auc_{score_name}_{subset}.csv", index=False)
+            fpr95 = pd.DataFrame(fpr_rows, columns=["Reference", "Encoder", *base_datasets, "All", "Holdout"])
+            fpr95.to_csv(results_root / f"fpr95_{score_name}_{subset}.csv", index=False)
 
         if run_report:
             caption = "AUC percentage scores of encoders trained and evaluated across different datasets"
@@ -607,9 +898,22 @@ def main() -> None:
             export_methods_table(
                 results_root / f"auc_{score_name}_{subset}.csv", caption=caption, label=f"tab:datagen_{subset}"
             )
+            export_generalization_plots(
+                auc_csv_path=results_root / f"auc_{score_name}_{subset}.csv",
+                fpr_csv_path=results_root / f"fpr95_{score_name}_{subset}.csv",
+                plot_dir=results_root,
+                subset=subset,
+            )
+            export_generalization_csv(
+                auc_csv_path=results_root / f"auc_{score_name}_{subset}.csv",
+                fpr_csv_path=results_root / f"fpr95_{score_name}_{subset}.csv",
+                csv_path=results_root / f"auc_fpr95_{score_name}_{subset}.csv",
+            )
 
     # After all processing, check if auc_mahala_1k, 10k, 100k exist and plot comparison if so
     if run_report:
+        export_generalization_legend(plot_dir=results_root)
+
         auc_1k, auc_10k, auc_100k = (
             results_root / "auc_mahalanobis_1k.csv",
             results_root / "auc_mahalanobis_10k.csv",

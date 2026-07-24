@@ -8,6 +8,7 @@ version = "0.0.0"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = "==3.13.*"
 dependencies = [
+  "icecream>=2.2.0",
   "ipywidgets>=8.1.8",
   "numba>=0.61",
   "pyiqa>=0.1.16",
@@ -83,7 +84,18 @@ dev = [
     "ollama",
     "optuna",
     "ruff==0.11.10",
+    "selfclean",
 ]
+
+[tool.uv]
+# selfclean pins `transformers[torch]==4.27.4`, which pulls in a `tokenizers`
+# version with no prebuilt wheel for this Python/platform (needs a Rust
+# compiler to build from source, unavailable here). The pin is unnecessarily
+# strict — selfclean's actual runtime code (verified against its installed
+# source, not just its metadata) works fine against the modern `transformers`
+# this repo already depends on for pyiqa's qalign metric. Override it so
+# `uv sync` resolves cleanly instead of trying to build the old `tokenizers`.
+override-dependencies = ["transformers>=4.27.4"]
 
 # [project.scripts]
 # script-name = "module:function"

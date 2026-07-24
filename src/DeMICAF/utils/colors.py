@@ -47,6 +47,7 @@ COLOR_MAP = {
     "MIMIC-CXR": "Lilac",
     "PadChest": "Red",
     "All": "Black",
+    "Holdout": "Grey",
     "SimCLR": "Blue",
     "CSI": "Green",
     "UniCon": "Lilac",

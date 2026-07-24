@@ -15,6 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.transforms import Bbox
 from matplotlib.ticker import MaxNLocator, ScalarFormatter
 from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 
@@ -648,8 +649,8 @@ def export_scheme_table(
 
 # Scheme-plot line colors; linestyles keep the schemes distinguishable if the palette is unavailable.
 scheme_plot_colors = {
-    "Encoder": "#888888",
-    "Full": "#64C7EA",
+    "Prior": "#64C7EA",
+    "Aggregate": "#A6A0F5",
     "Compliant": "#7BDA19",
     "Prevalence": "#000000",
     "NIQE": "#A6A0F5",
@@ -657,6 +658,69 @@ scheme_plot_colors = {
 
 # Legend entries grouped under the "Baseline" title instead of "Reference".
 baseline_legend_labels = ("NIQE",)
+
+
+def _export_split_panels(
+    fig: plt.Figure,
+    axes,
+    plot_path: Path,
+    legend_artists: list,
+    pad_inches: float = 0.02,
+    twin_axes: list | None = None,
+) -> None:
+    """Export each axis in ``axes`` as its own cropped image, plus one reference image.
+
+    The reference image covers ``legend_artists`` (e.g. figure legends and/or
+    suptitle). Each panel file replaces the combined figure for use as a standalone
+    subplot image. The reference image is cropped tightly in height but kept
+    at the same width as the full row of panels (``axes[0]`` to ``axes[-1]``)
+    rather than tightly around the legend content itself: this keeps its
+    text/line scale consistent with the panels when both are later scaled to
+    the same width in a document, instead of the reference blowing up
+    relative to the panels.
+
+    ``twin_axes``, if given, is a same-length list of secondary (``twinx``)
+    axes whose tight bbox is unioned into the matching panel's crop, so a
+    twin axis's own label/ticks (e.g. only visible on the last panel) are not
+    cut off.
+    """
+    plot_path = Path(plot_path)
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    to_inches = fig.dpi_scale_trans.inverted()
+
+    if twin_axes is None:
+        axes_bboxes_px = [ax.get_tightbbox(renderer) for ax in axes]
+    else:
+        axes_bboxes_px = [
+            Bbox.union([ax.get_tightbbox(renderer), twin_ax.get_tightbbox(renderer)])
+            for ax, twin_ax in zip(axes, twin_axes, strict=True)
+        ]
+    for encoder, bbox_px in zip(datasets, axes_bboxes_px, strict=True):
+        panel_bbox = bbox_px.transformed(to_inches).padded(pad_inches)
+        panel_path = plot_path.with_name(f"{plot_path.stem}_{encoder}{plot_path.suffix}")
+        fig.savefig(panel_path, dpi=300, bbox_inches=panel_bbox)
+        print(f"File saved to {panel_path}.")
+
+    row_x0_px = axes_bboxes_px[0].x0
+    row_x1_px = axes_bboxes_px[-1].x1
+    row_bottom_px = min(bbox_px.y0 for bbox_px in axes_bboxes_px)
+    row_top_px = max(bbox_px.y1 for bbox_px in axes_bboxes_px)
+    legend_bboxes_px = [artist.get_window_extent(renderer) for artist in legend_artists if artist is not None]
+    legend_union_px = Bbox.union(legend_bboxes_px)
+    # Clamp against whichever side of the panel row the legend sits on, so the
+    # reference crop never overlaps panel content (titles above, ticks below).
+    legend_center_px = (legend_union_px.y0 + legend_union_px.y1) / 2
+    if legend_center_px >= row_top_px:
+        reference_y0_px, reference_y1_px = max(legend_union_px.y0, row_top_px), legend_union_px.y1
+    else:
+        reference_y0_px, reference_y1_px = legend_union_px.y0, min(legend_union_px.y1, row_bottom_px)
+    reference_bbox_px = Bbox.from_extents(row_x0_px, reference_y0_px, row_x1_px, reference_y1_px)
+    reference_bbox = reference_bbox_px.transformed(to_inches).padded(pad_inches)
+    reference_path = plot_path.with_name(f"{plot_path.stem}_legend{plot_path.suffix}")
+    fig.savefig(reference_path, dpi=300, bbox_inches=reference_bbox)
+    print(f"File saved to {reference_path}.")
 
 
 def export_scheme_plot(
@@ -719,12 +783,12 @@ def export_scheme_plot(
 
     # (legend label, method key, linestyle) for the horizontal reference lines.
     reference_lines = [
-        ("Encoder", "Independent", "-"),
-        ("Full", "Average", "-"),
+        ("Prior", "Independent", "-"),
+        ("Aggregate", "Average", "-"),
     ]
 
     apply_thesis_style()
-    fig, axes = plt.subplots(1, len(datasets), figsize=(9, 2.5), sharey=True)
+    fig, axes = plt.subplots(1, len(datasets), figsize=(9, 2), sharey=True)
 
     for ax, encoder in zip(axes, datasets, strict=True):
         for label, method, linestyle in reference_lines:
@@ -747,7 +811,7 @@ def export_scheme_plot(
                 x_values,
                 y_values,
                 color=scheme_plot_colors["Compliant"],
-                marker="o",
+                marker="",
                 markersize=4,
                 linewidth=1.8,
                 label="Compliant",
@@ -789,7 +853,7 @@ def export_scheme_plot(
         ax.set_xscale("log")
         ax.set_xticks(picked_samples)
         ax.xaxis.set_major_formatter(ScalarFormatter())
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=8, min_n_ticks=8))
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=5))
         ax.minorticks_off()
         ax.grid(alpha=0.15)
 
@@ -813,34 +877,270 @@ def export_scheme_plot(
     # prevalence chance level (not a baseline method), then the titled
     # "Reference" and "Baseline" groups.
     legend_groups: list[tuple[list, str | None, bool]] = []
+    if prevalence_entries:
+        legend_groups.append((prevalence_entries, " ", False))
     if reference_entries:
         legend_groups.append((reference_entries, "Reference", True))
     if baseline_entries:
         legend_groups.append((baseline_entries, "Baseline", True))
-    if prevalence_entries:
-        legend_groups.append((prevalence_entries, " ", False))
 
-    group_anchors = {1: (0.5,), 2: (0.865, 0.505), 3: (0.865, 0.505, 0.365)}[len(legend_groups)]
+    group_anchors = {1: (0.5,), 2: (0.45, 0.68), 3: (0.26, 0.5, 0.73)}[len(legend_groups)]
     for (entries, title, frameon), anchor in zip(legend_groups, group_anchors, strict=True):
         fig.legend(
             [handle for handle, _ in entries],
             [label for _, label in entries],
-            loc="upper left",
-            bbox_to_anchor=(0.865, anchor),
-            ncol=1,
+            loc="upper center",
+            bbox_to_anchor=(anchor, 1.3),
+            ncol=len(entries),
             frameon=frameon,
             title=title,
         )
-    fig.tight_layout(rect=(-0.01, 0, 0.88, 0.97))
-    fig.suptitle("Prior Dataset", y=0.995)#, fontsize=plt.rcParams["axes.labelsize"])
-    fig.supxlabel("Number of Compliant Samples", y=0, fontsize=plt.rcParams["axes.labelsize"])
+    fig.tight_layout(rect=(-0.01, 0.01, 0.97, 1))
+    suptitle = fig.suptitle("Prior Dataset", y=1.04)#, fontsize=plt.rcParams["axes.labelsize"])
 
-
-    plot_path = Path(plot_path)
-    plot_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(plot_path, dpi=300)
+    _export_split_panels(fig, axes, plot_path, legend_artists=[*fig.legends, suptitle])
     plt.close(fig)
-    print(f"File saved to {plot_path}.")
+
+
+def export_scheme_auc_fpr_plot(
+    auc_csv_path: Path,
+    fpr_csv_path: Path,
+    plot_path: Path,
+) -> None:
+    """Export the per-prior-dataset reference-scheme figure combining AUC and FPR@95TPR.
+
+    One subplot per prior (encoder training) dataset, titled with its name.
+    The Prior (``Independent``) and Aggregate (``Average``) reference schemes are
+    drawn as horizontal lines, and the Compliant (picked-sample) scheme is a
+    curve over the number of picked compliant samples: AUC (%) on the left
+    axis as solid lines, and FPR@95TPR (%) on the right axis as dashed lines.
+    NIQE and Prevalence baselines are not shown.
+    """
+    auc_csv_path = Path(auc_csv_path)
+    fpr_csv_path = Path(fpr_csv_path)
+    for path in (auc_csv_path, fpr_csv_path):
+        if not path.exists():
+            raise FileNotFoundError(f"Metrics CSV not found: {path}")
+
+    auc_df = pd.read_csv(auc_csv_path)
+    fpr_df = pd.read_csv(fpr_csv_path)
+    required_columns = ["method", "encoder", "Holdout"]
+    for df, path in ((auc_df, auc_csv_path), (fpr_df, fpr_csv_path)):
+        missing = [column for column in required_columns if column not in df.columns]
+        if missing:
+            raise ValueError(f"Missing required columns for scheme plot in {path}: {missing}")
+
+    def holdout_for(df: pd.DataFrame, method: str, encoder: str) -> float | None:
+        row = df[(df["method"] == method) & (df["encoder"] == encoder)]
+        if row.empty or pd.isna(row.iloc[-1]["Holdout"]):
+            return None
+        return float(row.iloc[-1]["Holdout"])
+
+    # (legend label, method key) for the horizontal reference lines.
+    reference_lines = [
+        ("Prior", "Independent"),
+        ("Aggregate", "Average"),
+    ]
+
+    apply_thesis_style()
+    fig, axes = plt.subplots(1, len(datasets), figsize=(9, 2.25), sharey=True)
+    twin_axes = []
+
+    for ax, encoder in zip(axes, datasets, strict=True):
+        ax2 = ax.twinx()
+        twin_axes.append(ax2)
+
+        for label, method in reference_lines:
+            auc_value = holdout_for(auc_df, method, encoder)
+            if auc_value is not None:
+                ax.axhline(auc_value, color=scheme_plot_colors[label], linestyle="-", linewidth=1.8, label=label)
+
+            fpr_value = holdout_for(fpr_df, method, encoder)
+            if fpr_value is not None:
+                ax2.axhline(fpr_value, color=scheme_plot_colors[label], linestyle="--", linewidth=1.8, label=label)
+
+        auc_picked_points = [
+            (
+                n_samples,
+                holdout_for(auc_df, f"Picked_{n_samples}_Samples", encoder),
+                holdout_for(auc_df, f"Picked_{n_samples}_Samples_std", encoder),
+            )
+            for n_samples in picked_samples
+        ]
+        auc_picked_points = [(n, value, std) for n, value, std in auc_picked_points if value is not None]
+        if auc_picked_points:
+            x_values, y_values, std_values = zip(*auc_picked_points, strict=True)
+            ax.plot(
+                x_values,
+                y_values,
+                color=scheme_plot_colors["Compliant"],
+                linestyle="-",
+                marker=".",
+                markersize=8,
+                linewidth=1.8,
+                label="Compliant",
+            )
+            if all(std is not None for std in std_values):
+                means = np.asarray(y_values, dtype=np.float64)
+                stds = np.asarray(std_values, dtype=np.float64)
+                ax.fill_between(
+                    x_values,
+                    means - stds,
+                    means + stds,
+                    color=scheme_plot_colors["Compliant"],
+                    alpha=0.4,
+                    linewidth=0,
+                )
+
+        fpr_picked_points = [
+            (
+                n_samples,
+                holdout_for(fpr_df, f"Picked_{n_samples}_Samples", encoder),
+                holdout_for(fpr_df, f"Picked_{n_samples}_Samples_std", encoder),
+            )
+            for n_samples in picked_samples
+        ]
+        fpr_picked_points = [(n, value, std) for n, value, std in fpr_picked_points if value is not None]
+        if fpr_picked_points:
+            x_values, y_values, std_values = zip(*fpr_picked_points, strict=True)
+            ax2.plot(
+                x_values,
+                y_values,
+                color=scheme_plot_colors["Compliant"],
+                linestyle="--",
+                marker=".",
+                markersize=8,
+                linewidth=1.8,
+                label="Compliant",
+            )
+            if all(std is not None for std in std_values):
+                means = np.asarray(y_values, dtype=np.float64)
+                stds = np.asarray(std_values, dtype=np.float64)
+                ax2.fill_between(
+                    x_values,
+                    means - stds,
+                    means + stds,
+                    facecolor=scheme_plot_colors["Compliant"],
+                    alpha=0.20,
+                    # hatch="///",
+                    edgecolor="white",
+                    linewidth=0,
+                )
+
+        # ax.set_title(scheme_train_labels.get(encoder, encoder), fontsize=plt.rcParams["axes.labelsize"])
+        ax.set_xscale("log")
+        ax.set_xticks(picked_samples)
+        # ax.set_xlabel(r"$M$")
+        ax.xaxis.set_major_formatter(ScalarFormatter())
+        ax.minorticks_off()
+        ax.set_ylim(bottom=50,top=90)
+        ax2.set_ylim(top=100)
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=5))
+        ax2.yaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=5))
+        # ax.grid(alpha=0.15)
+
+        if ax is not axes[-1]:
+            ax2.set_yticklabels([])
+
+    axes[0].set_ylabel("AUC (%)")
+    twin_axes[-1].set_ylabel("FPR@95TPR (%)")
+
+    # Legend: one entry per reference scheme (color), plus line-style key for the metric.
+    scheme_handles = [
+        plt.Line2D([0], [0], color=scheme_plot_colors[label], linestyle="-", linewidth=1.8)
+        for label, _ in reference_lines
+    ] + [
+        plt.Line2D(
+            [0], [0], color=scheme_plot_colors["Compliant"], linestyle="-", linewidth=1.8, marker="", markersize=4
+        )
+    ]
+    scheme_labels = [label for label, _ in reference_lines] + ["Compliant"]
+    style_handles = [
+        plt.Line2D([0], [0], color="black", linestyle="-", linewidth=1.8),
+        plt.Line2D([0], [0], color="black", linestyle="--", linewidth=1.8),
+    ]
+    style_labels = ["AUC", "FPR@95TPR"]
+
+    fig.legend(
+        scheme_handles,
+        scheme_labels,
+        loc="upper center",
+        bbox_to_anchor=(0.36, 0.0),
+        ncol=len(scheme_handles),
+        frameon=True,
+        title="Reference Scheme",
+    )
+    fig.legend(
+        style_handles,
+        style_labels,
+        loc="upper center",
+        bbox_to_anchor=(0.70, 0.0),
+        ncol=len(style_handles),
+        frameon=True,
+        title="Metric",
+    )
+
+    fig.tight_layout(rect=(-0.01, 0, 0.97, 1))
+
+    _export_split_panels(fig, axes, plot_path, legend_artists=list(fig.legends), twin_axes=twin_axes)
+    plt.close(fig)
+
+
+def export_scheme_auc_fpr_csv(
+    auc_csv_path: Path,
+    fpr_csv_path: Path,
+    csv_path: Path,
+) -> None:
+    """Export the combined AUC + FPR@95TPR table underlying :func:`export_scheme_auc_fpr_plot`.
+
+    One row per (encoder, scheme): the Independent/Average reference schemes and
+    each Picked_N_Samples scheme, with their Holdout AUC and FPR@95TPR (plus the
+    picked schemes' across-iteration standard deviation, where available).
+    """
+    auc_csv_path = Path(auc_csv_path)
+    fpr_csv_path = Path(fpr_csv_path)
+    for path in (auc_csv_path, fpr_csv_path):
+        if not path.exists():
+            raise FileNotFoundError(f"Metrics CSV not found: {path}")
+
+    auc_df = pd.read_csv(auc_csv_path)
+    fpr_df = pd.read_csv(fpr_csv_path)
+    required_columns = ["method", "encoder", "Holdout"]
+    for df, path in ((auc_df, auc_csv_path), (fpr_df, fpr_csv_path)):
+        missing = [column for column in required_columns if column not in df.columns]
+        if missing:
+            raise ValueError(f"Missing required columns for scheme csv in {path}: {missing}")
+
+    def holdout_for(df: pd.DataFrame, method: str, encoder: str) -> float | None:
+        row = df[(df["method"] == method) & (df["encoder"] == encoder)]
+        if row.empty or pd.isna(row.iloc[-1]["Holdout"]):
+            return None
+        return float(row.iloc[-1]["Holdout"])
+
+    schemes: list[tuple[str, str, int | None]] = [
+        ("Prior", "Independent", None),
+        ("Aggregate", "Average", None),
+        *[("Compliant", f"Picked_{n_samples}_Samples", n_samples) for n_samples in picked_samples],
+    ]
+
+    rows = [
+        {
+            "encoder": encoder,
+            "scheme": scheme_label,
+            "n_samples": n_samples,
+            "auc": holdout_for(auc_df, method, encoder),
+            "auc_std": holdout_for(auc_df, f"{method}_std", encoder),
+            "fpr95": holdout_for(fpr_df, method, encoder),
+            "fpr95_std": holdout_for(fpr_df, f"{method}_std", encoder),
+        }
+        for encoder in datasets
+        for scheme_label, method, n_samples in schemes
+    ]
+
+    csv_path = Path(csv_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    print(f"File saved to {csv_path}.")
 
 
 def main():
@@ -873,9 +1173,11 @@ def main():
         methods_tex_output_path = results_root / f"{subset}_auc_methods.tex"
         scheme_auc_tex_output_path = results_root / f"{subset}_scheme_auc.tex"
         scheme_ap_tex_output_path = results_root / f"{subset}_scheme_ap.tex"
-        scheme_auc_plot_output_path = results_root / "demicaf_auc.png"
-        scheme_ap_plot_output_path = results_root / "demicaf_ap.png"
-        scheme_fpr_plot_output_path = results_root / "demicaf_fpr.png"
+        scheme_auc_plot_output_path = results_root / "demicaf_auc.pdf"
+        scheme_ap_plot_output_path = results_root / "demicaf_ap.pdf"
+        scheme_fpr_plot_output_path = results_root / "demicaf_fpr.pdf"
+        scheme_auc_fpr_plot_output_path = results_root / "demicaf_auc_fpr.pdf"
+        scheme_auc_fpr_csv_output_path = results_root / f"{subset}_scheme_auc_fpr.csv"
 
         if run_compute:
             for encoder in datasets:
@@ -1162,30 +1464,44 @@ def main():
                 ),
                 label="tab:static_encoder_scheme_ap",
             )
-            export_scheme_plot(
-                csv_path=csv_path,
-                plot_path=scheme_auc_plot_output_path,
-                ylabel="AUC (%)",
-                baseline_csv_path=niqe_baseline_csv_path,
-            )
-            export_scheme_plot(
-                csv_path=ap_csv_path,
-                plot_path=scheme_ap_plot_output_path,
-                ylabel="Average Precision (%)",
-                baseline_csv_path=niqe_baseline_csv_path,
-                baseline_column="niqe_ap",
-                show_prevalence=True,
-            )
+            # export_scheme_plot(
+            #     csv_path=csv_path,
+            #     plot_path=scheme_auc_plot_output_path,
+            #     ylabel="AUC (%)",
+            #     baseline_csv_path=niqe_baseline_csv_path,
+            # )
+            # export_scheme_plot(
+            #     csv_path=ap_csv_path,
+            #     plot_path=scheme_ap_plot_output_path,
+            #     ylabel="AP (%)",
+            #     baseline_csv_path=niqe_baseline_csv_path,
+            #     baseline_column="niqe_ap",
+            #     show_prevalence=True,
+            # )
+            # if fpr_csv_path.exists():
+            #     export_scheme_plot(
+            #         csv_path=fpr_csv_path,
+            #         plot_path=scheme_fpr_plot_output_path,
+            #         ylabel="FPR@95TPR (%)",
+            #         baseline_csv_path=niqe_baseline_csv_path,
+            #         baseline_column="niqe_fpr95",
+            #     )
+            # else:
+            #     print(f"Skipping FPR plot: {fpr_csv_path} not found (run with --compute first).")
+
             if fpr_csv_path.exists():
-                export_scheme_plot(
-                    csv_path=fpr_csv_path,
-                    plot_path=scheme_fpr_plot_output_path,
-                    ylabel="FPR@95TPR (%)",
-                    baseline_csv_path=niqe_baseline_csv_path,
-                    baseline_column="niqe_fpr95",
+                export_scheme_auc_fpr_plot(
+                    auc_csv_path=csv_path,
+                    fpr_csv_path=fpr_csv_path,
+                    plot_path=scheme_auc_fpr_plot_output_path,
+                )
+                export_scheme_auc_fpr_csv(
+                    auc_csv_path=csv_path,
+                    fpr_csv_path=fpr_csv_path,
+                    csv_path=scheme_auc_fpr_csv_output_path,
                 )
             else:
-                print(f"Skipping FPR plot: {fpr_csv_path} not found (run with --compute first).")
+                print(f"Skipping AUC/FPR combo plot: {fpr_csv_path} not found (run with --compute first).")
 
 
 if __name__ == "__main__":

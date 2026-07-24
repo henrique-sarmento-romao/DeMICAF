@@ -1,4 +1,4 @@
-# DeCaF — A Compliance-Annotation Dataset for Chest Radiography
+# DeMICAF — A Decentralised Medical Image Compliance Assessment Framework
 
 This repository accompanies the paper *MICAFFe: Medical Imaging Compliance Assessment
 Framework for Federated Learning*. It releases:

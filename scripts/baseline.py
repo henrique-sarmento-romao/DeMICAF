@@ -166,7 +166,7 @@ def _safe_metric(fn: Any, tensor: torch.Tensor) -> float | None:
 
 def create_metric_fns() -> dict[str, Any]:
     """Instantiate the pyiqa metrics once; parameters are downloaded on first use."""
-    return {name: pyiqa.create_metric(name) for name in ("brisque", "niqe")}
+    return {name: pyiqa.create_metric(name) for name in ("brisque", "niqe", "qalign")}
 
 
 def compute_metrics(image: Image.Image, metric_fns: dict[str, Any]) -> dict[str, float | None]:
