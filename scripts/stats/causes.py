@@ -1,7 +1,7 @@
 """Compliance non-compliance-cause statistics and figures.
 
 Standalone entry point (``python -m scripts.stats.causes``) regenerates, from the
-bundled annotations (``data/annotations/annotated_causes.csv``):
+bundled annotations (``annotations/annotated_causes.csv``):
 
 * ``data/stats/Causes_Chart.png`` — grouped bar chart of cause counts per dataset;
 * ``data/stats/causes_stats.md`` — the per-dataset cause-count table.
@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from DeMICAF.utils.colors import COLOR_DICT
-from DeMICAF.utils.paths import get_repo_root
+from DeMICAF.utils.paths import get_annotations_root, get_repo_root
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -785,8 +785,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--annotations",
         type=Path,
-        default=repo_root / "data" / "annotations" / "annotated_causes.csv",
-        help="Annotations CSV (default: bundled data/annotations/annotated_causes.csv).",
+        default=get_annotations_root() / "annotated_causes.csv",
+        help="Annotations CSV (default: bundled annotations/annotated_causes.csv).",
     )
     parser.add_argument(
         "--out",

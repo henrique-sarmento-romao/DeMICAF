@@ -1,1 +1,1 @@
-"""Federated-learning simulation for the DeCaF pathology classifier."""
+"""Federated-learning simulation for the DeMICAF pathology classifier."""

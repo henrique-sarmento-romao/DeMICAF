@@ -1,1 +1,1 @@
-"""Shared utilities: seeding, configuration, paths, feature/score I/O, colors and plotting."""
+"""Shared utilities: seeding, paths, feature/score I/O, colors and plotting."""

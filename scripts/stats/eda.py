@@ -1,11 +1,11 @@
 """Exploratory data analysis.
 
-Generates the per-dataset demographic figures (position, sex, age) used in the
-thesis from the raw metadata CSVs of the four chest X-ray datasets.
+Generates the per-dataset demographic figures (position, sex, age) from the raw
+metadata CSVs of the four chest X-ray datasets.
 
 Usage (from the repository root)::
 
-    python -m scripts.centralised.eda --data-root dvc/chest_xray --out <results-dir>
+    python -m scripts.stats.eda --data-root "$CXR_ROOT" --out <results-dir>
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 
 from DeMICAF.utils.colors import COLOR_DICT
-from DeMICAF.utils.paths import get_repo_root
-from DeMICAF.utils.plotting import FIG_SIZE, annotate_bars, apply_thesis_style, use_thousands_axis
+from DeMICAF.utils.paths import get_cxr_root, get_results_root
+from DeMICAF.utils.plotting import FIG_SIZE, annotate_bars, apply_paper_style, use_thousands_axis
 
 POSITION_MAP = {
     "AP": "Frontal (AP)",
@@ -78,7 +78,7 @@ def _save_bar_plot(
     xlabel: str | None = None,
     tick_labels: list[str] | None = None,
 ) -> None:
-    """Save a thesis-style annotated bar plot."""
+    """Save a paper-style annotated bar plot."""
     fig, ax = plt.subplots(figsize=FIG_SIZE)
     bars = ax.bar(range(len(labels)), counts, color=colors)
     max_count = max(counts) if counts else 1
@@ -157,18 +157,18 @@ def plot_demographics(meta: dict[str, pd.DataFrame], save_folder: Path) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Dataset statistics and demographic figures (CA0).")
+    parser = argparse.ArgumentParser(description="Dataset statistics and demographic figures.")
     parser.add_argument(
         "--data-root",
         type=Path,
-        default=Path("dvc/chest_xray"),
-        help="Folder containing the per-dataset metadata CSVs (default: dvc/chest_xray).",
+        default=get_cxr_root(),
+        help="Folder containing the per-dataset metadata CSVs (default: $CXR_ROOT or <repo_root>/data/chest_xray).",
     )
     parser.add_argument(
         "--out",
         type=Path,
         default=None,
-        help="Output folder for figures (default: <repo_root>/Results/CA0).",
+        help="Output folder for figures (default: <repo_root>/results/demographics).",
     )
     return parser.parse_args()
 
@@ -176,8 +176,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """CLI entrypoint."""
     args = parse_args()
-    apply_thesis_style()
-    save_folder = args.out if args.out is not None else get_repo_root() / "Results" / "CA0"
+    apply_paper_style()
+    save_folder = args.out if args.out is not None else get_results_root() / "demographics"
     save_folder.mkdir(parents=True, exist_ok=True)
 
     meta = load_metadata(args.data_root)

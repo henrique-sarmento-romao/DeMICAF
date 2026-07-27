@@ -1,12 +1,12 @@
-r"""Train the DeCaF pathology classifier via federated averaging (FedAvg).
+r"""Train the DeMICAF pathology classifier via federated averaging (FedAvg).
 
-Replicates the FL procedure used for the sibling private repo's
-``full/fedavg`` classifier checkpoints (resnet152, 6 findings), but trained
-and shipped inside this repo as resnet18. Trains on the 3 client datasets
-(ChestX-ray8, MIMIC-CXR, PadChest); CheXpert is held out and used only for
-the final external-evaluation AUC — never seen during training. Its
-penultimate-layer features feed the ``knn``/``maha_pp`` per-cause benchmark
-scorers (see ``scripts/extract_classifier_features.py``).
+This is the FedAvg baseline pathology classifier used by the per-cause
+benchmark's ``knn``/``maha_pp``/``gen`` OOD-detection baselines: a ResNet-18
+multi-label classifier trained on the 3 client datasets (ChestX-ray8,
+MIMIC-CXR, PadChest); CheXpert is held out and used only for the final
+external-evaluation AUC — never seen during training. Its penultimate-layer
+features feed the ``knn``/``maha_pp`` per-cause benchmark scorers (see
+``scripts/extract_classifier_features.py``).
 
 Typical usage::
 
@@ -29,11 +29,10 @@ from pathlib import Path
 from DeMICAF.federated.client import FLClient
 from DeMICAF.federated.data import ClientConfig, load_client_splits, load_evaluation_set, make_data_loader
 from DeMICAF.federated.server import FLServer
-from DeMICAF.utils.paths import get_repo_root, resolve_path
+from DeMICAF.utils.paths import get_cxr_root, get_results_root, resolve_path
 from DeMICAF.utils.seeding import set_global_determinism
 
-# Matches configs/federated/base.yaml in the sibling private repo: CheXpert is
-# excluded from training and used only as the held-out evaluation dataset.
+# CheXpert is excluded from training and used only as the held-out evaluation dataset.
 CLIENTS = ["ChestX-ray8", "PadChest", "MIMIC-CXR"]
 PRIOR_DATASET = "CheXpert"
 LABEL_COLS = ["Cardiomegaly", "Atelectasis", "Nodule", "Alveolar Pattern", "Pleural Effusion", "Pneumothorax"]
@@ -41,13 +40,12 @@ LABEL_COLS = ["Cardiomegaly", "Atelectasis", "Nodule", "Alveolar Pattern", "Pleu
 
 def parse_args() -> argparse.Namespace:
     """Define and parse command-line arguments."""
-    repo_root = get_repo_root()
     parser = argparse.ArgumentParser(
-        description="Train the DeCaF pathology classifier via FedAvg.",
+        description="Train the DeMICAF pathology classifier via FedAvg.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--data-root", type=str, default="/eos/user/h/hpestana/CXR")
-    parser.add_argument("--out-dir", type=Path, default=repo_root / "Results" / "PerCause" / "Classifier")
+    parser.add_argument("--data-root", type=str, default=str(get_cxr_root()))
+    parser.add_argument("--out-dir", type=Path, default=get_results_root() / "per_cause" / "classifier")
     parser.add_argument("--architecture", type=str, default="resnet18", choices=["resnet18", "resnet152"])
     parser.add_argument("--dropout-rate", type=float, default=0.1)
     parser.add_argument("--rounds", type=int, default=100, help="Maximum FL communication rounds.")

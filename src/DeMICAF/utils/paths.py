@@ -1,9 +1,18 @@
-"""Path resolution shared across the DeCaF scripts.
+"""Path resolution shared across the DeMICAF scripts.
 
-The repository root holds ``data/`` (annotations, taxonomy, figure palette) and the
-importable library under ``src/``. Its location is resolved automatically from this
-file; override it with the ``DECAF_ROOT`` environment variable when running from an
-installed copy or a relocated checkout.
+The repository root holds ``annotations/`` (the released compliance annotations),
+``data/`` (figure palette, dataset statistics), and the importable library under
+``src/``. Its location is resolved automatically from this file; override it with
+the ``DEMICAF_ROOT`` environment variable when running from an installed copy or a
+relocated checkout.
+
+Three further roots are resolved relative to the repository root unless overridden:
+
+- ``get_annotations_root()`` — the released compliance annotations (``annotations/``).
+- ``get_cxr_root()`` — the raw chest-radiograph image data (``$CXR_ROOT``), which is
+  never committed and is registration-gated (see ``docs/DATASET_CARD.md``).
+- ``get_results_root()`` — where every script writes its outputs (``results/``),
+  which is git-ignored.
 """
 
 from __future__ import annotations
@@ -26,11 +35,29 @@ DATASET_PREFIXES = {
 
 
 def get_repo_root() -> Path:
-    """Return the repository root: ``$DECAF_ROOT`` if set, else inferred from this file."""
-    env_root = os.environ.get("DECAF_ROOT")
+    """Return the repository root: ``$DEMICAF_ROOT`` if set, else inferred from this file."""
+    env_root = os.environ.get("DEMICAF_ROOT")
     if env_root:
         return Path(env_root)
     return _REPO_ROOT
+
+
+def get_annotations_root() -> Path:
+    """Return the released annotations root: ``<repo_root>/annotations``."""
+    return get_repo_root() / "annotations"
+
+
+def get_cxr_root() -> Path:
+    """Return the raw image data root: ``$CXR_ROOT`` if set, else ``<repo_root>/data/chest_xray``."""
+    env_root = os.environ.get("CXR_ROOT")
+    if env_root:
+        return Path(env_root)
+    return get_repo_root() / "data" / "chest_xray"
+
+
+def get_results_root() -> Path:
+    """Return the results root all scripts write under: ``<repo_root>/results``."""
+    return get_repo_root() / "results"
 
 
 def normalize_path(value: Any) -> str:

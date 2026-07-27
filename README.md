@@ -1,7 +1,7 @@
-# DeMICAF — A Decentralised Medical Image Compliance Assessment Framework
+# DeMICAF — A Decentralised Medical Imaging Compliance Assessment Framework
 
-This repository accompanies the paper *MICAFFe: Medical Imaging Compliance Assessment
-Framework for Federated Learning*. It releases:
+This repository accompanies the paper *DeMICAF: A Decentralised Medical Imaging
+Compliance Assessment Framework*. It releases:
 
 1. **The dataset** — manual **compliance annotations** for 4,000 chest X-rays
    (1,000 each from four public datasets), labelled *compliant* / *non-compliant* with
@@ -10,10 +10,14 @@ Framework for Federated Learning*. It releases:
    builder, the dataset loader, and dataset statistics/figures.
 3. **The Compliance Assessment Framework (CAF)** — the contrastive encoder plus the
    Mahalanobis / cosine scorer and federated score normalization used to produce
-   per-image compliance scores.
+   per-image compliance scores, decentralised across clients as described in the paper
+   (Prior / Aggregated / Adaptive / Compliant reference schemes).
+4. **The per-cause benchmark** — DeMICAF vs. NR-IQA, OOD-detection, and centralised
+   compliance baselines (DeepClean, SelfClean), including the FedAvg pathology
+   classifier used by the classifier-feature baselines.
 
 > **Images are not redistributed.** The four source datasets are registration-gated;
-> DeCaF ships the annotations keyed by image path plus the code. See
+> this repository ships the annotations keyed by image path plus the code. See
 > [`docs/DATASET_CARD.md`](docs/DATASET_CARD.md) for how to obtain the images.
 
 ## What is "compliance"?
@@ -34,7 +38,7 @@ Full definitions: [`docs/TAXONOMY.md`](docs/TAXONOMY.md).
 | PadChest       |     1,000 |       863 |           137 |
 | **Total**      | **4,000** | **3,449** |       **551** |
 
-The annotations live in [`data/annotations/annotated_causes.csv`](data/annotations/annotated_causes.csv):
+The annotations live in [`annotations/annotated_causes.csv`](annotations/annotated_causes.csv):
 
 | column | meaning |
 | ------ | ------- |
@@ -45,11 +49,14 @@ The annotations live in [`data/annotations/annotated_causes.csv`](data/annotatio
 ## Repository layout
 
 ```
-data/          annotations (CSV + taxonomy.json), figure palette, cause statistics
+annotations/   the released compliance annotations (CSV + taxonomy.json)
+data/          figure palette, cause statistics
 docs/          dataset card, taxonomy definitions, reproduction guide
-src/           importable library: CAF framework (caf/), loader (data/), evaluation, utils
-scripts/       preprocessing/ · scoring/ · stats/  (run as modules)
+src/           importable library: CAF framework (caf/), FL orchestration (federated/),
+               pathology classifier, loader (data/), evaluation, utils
+scripts/       preprocessing/ · scoring/ · stats/ · federated/ (run as modules)
 examples/      quickstart.py — load + score + evaluate end-to-end
+results/       script outputs (git-ignored; see docs/REPRODUCE.md for the layout)
 ```
 
 ## Quickstart
@@ -66,7 +73,7 @@ PYTHONPATH=src python -m scripts.stats.causes
 CXR_ROOT=/path/to/CXR PYTHONPATH=src python -m examples.quickstart --checkpoint encoder.pt
 ```
 
-The library resolves the repo root automatically; override it with `DECAF_ROOT` when
+The library resolves the repo root automatically; override it with `DEMICAF_ROOT` when
 running from a relocated copy. Source-image roots are configured via the `CXR_ROOT`
 environment variable (or `--data-root` / `--cxr-root` flags).
 
@@ -79,6 +86,6 @@ If you use these annotations or code, please cite the paper (see [`CITATION.cff`
 ## Licensing
 
 - **Code** — MIT (see [`LICENSE`](LICENSE)).
-- **Annotations** (`data/annotations/`) — CC BY 4.0.
+- **Annotations** (`annotations/`) — CC BY 4.0.
 - **Source images** — governed by each source dataset's own license / data-use
   agreement; not included here.

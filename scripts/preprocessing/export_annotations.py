@@ -5,13 +5,13 @@ Produces the distributed ``annotated_causes.csv`` (one row per annotated image, 
 per-dataset splits.
 
 The canonical release CSV is already shipped at
-``data/annotations/annotated_causes.csv``; this script documents how it is derived from
+``annotations/annotated_causes.csv``; this script documents how it is derived from
 the annotation database built by ``make_database.py`` and lets you regenerate it.
 
 Usage::
 
     python -m scripts.preprocessing.export_annotations --db annotations.db \
-        --out data/annotations/annotated_causes.csv --per-dataset
+        --out annotations/annotated_causes.csv --per-dataset
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from pathlib import Path
 
 import pandas as pd
 
-HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[1]
-TAXONOMY_PATH = REPO_ROOT / "data" / "annotations" / "taxonomy.json"
+from DeMICAF.utils.paths import get_annotations_root
+
+TAXONOMY_PATH = get_annotations_root() / "taxonomy.json"
 
 
 #: Prefix prepended to each dataset's stored path to form the canonical ``image_path``.
@@ -52,7 +52,6 @@ def _canonical_image_path(dataset: str, stored_path: str) -> str:
 def export_annotations(db_path: Path, out_csv: Path, *, per_dataset: bool = False) -> pd.DataFrame:
     """Flatten the annotation database into a wide ``image_path × cause`` table."""
     cause_cols = _cause_columns()
-    name_to_id = {name: col_id for col_id, name in cause_cols}
 
     conn = sqlite3.connect(str(db_path))
     try:
@@ -112,8 +111,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out",
         type=Path,
-        default=REPO_ROOT / "data" / "annotations" / "annotated_causes.csv",
-        help="Output CSV path (default: data/annotations/annotated_causes.csv).",
+        default=get_annotations_root() / "annotated_causes.csv",
+        help="Output CSV path (default: annotations/annotated_causes.csv).",
     )
     parser.add_argument("--per-dataset", action="store_true", help="Also write one CSV per source dataset.")
     return parser.parse_args()

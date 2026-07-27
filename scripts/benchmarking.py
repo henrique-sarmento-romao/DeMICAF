@@ -47,8 +47,8 @@ from tqdm import tqdm
 from DeMICAF.caf.scorer import mahalanobis_distance, reference_vector
 from DeMICAF.evaluation.bootstrap import LOW_N_THRESHOLD, METRIC_FNS, point_metrics, stratified_bootstrap
 from DeMICAF.utils.io import load_features
-from DeMICAF.utils.paths import get_repo_root, resolve_path
-from DeMICAF.utils.plotting import apply_thesis_style
+from DeMICAF.utils.paths import get_annotations_root, get_cxr_root, get_results_root, resolve_path
+from DeMICAF.utils.plotting import apply_paper_style
 from scripts.baseline import _safe_metric, image_to_tensor, load_image
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -102,8 +102,7 @@ N_BOOT_DEFAULT = 1000
 N_SEEDS_DEFAULT = 3
 SEED_BASE = 0
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
-FEATURES_ROOT = WORKSPACE_ROOT / "Assets" / "Features" / "100k"
+FEATURES_ROOT = get_results_root() / "features" / "100k"
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
@@ -598,10 +597,10 @@ def save_results_csv(results: pd.DataFrame, path: Path) -> None:
 CAUSE_ABBREVIATIONS = {
     "corrupted": "CI",
     "not_thorax": "NT",
-    "incomplete_thorax": "INC",
-    "image_quality": "IQ",
+    "incomplete_thorax": "IT",
+    "image_quality": "IQP",
     "area_not_valid": "ANV",
-    "overlaying_objects": "OVL",
+    "overlaying_objects": "OO",
     "non_canonical": "NCP",
 }
 
@@ -734,7 +733,7 @@ METHOD_COLORS = {
 
 def plot_per_cause_auroc(results: pd.DataFrame, plot_path: Path, methods: list[str]) -> None:
     """Hardcoded 2x4 grid: one panel per cause, AUROC bars with 95% CI whiskers, methods on x."""
-    apply_thesis_style()
+    apply_paper_style()
     auroc = results[results["metric"] == "auroc"]
 
     fig, axes = plt.subplots(2, 4, figsize=(12, 5.5), sharey=True)
@@ -771,25 +770,24 @@ def plot_per_cause_auroc(results: pd.DataFrame, plot_path: Path, methods: list[s
 
 def parse_args() -> argparse.Namespace:
     """Define and parse command-line arguments."""
-    repo_root = get_repo_root()
     parser = argparse.ArgumentParser(description="Per-cause compliance benchmark: DeMICAF vs. baselines.")
     parser.add_argument(
         "--annotations",
         type=Path,
-        default=repo_root / "data" / "annotations" / "annotated_causes.csv",
+        default=get_annotations_root() / "annotated_causes.csv",
     )
-    parser.add_argument("--data-root", type=str, default="/eos/user/h/hpestana/CXR")
+    parser.add_argument("--data-root", type=str, default=str(get_cxr_root()))
     parser.add_argument(
         "--niqe-brisque-cache",
         type=Path,
-        default=repo_root / "Results" / "Baseline" / "perceptual_iqa.csv",
+        default=get_results_root() / "baseline" / "perceptual_iqa.csv",
         help="Pre-computed niqe/brisque CSV from scripts/baseline.py.",
     )
-    parser.add_argument("--out-dir", type=Path, default=repo_root / "Results" / "PerCause")
+    parser.add_argument("--out-dir", type=Path, default=get_results_root() / "per_cause")
     parser.add_argument(
         "--classifier-features-dir",
         type=Path,
-        default=repo_root / "Results" / "PerCause",
+        default=get_results_root() / "per_cause",
         help="Directory with classifier_features_{client}.npz from extract_classifier_features.py.",
     )
     parser.add_argument("--n-seeds", type=int, default=N_SEEDS_DEFAULT)

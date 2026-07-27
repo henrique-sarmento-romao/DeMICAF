@@ -1,7 +1,4 @@
 """
-caf_normalisation.py.
-
-====================
 Parametric normalisation of Mahalanobis Distance (MD) scores into [0, 1]
 compliance scores suitable for federated deployment.
 

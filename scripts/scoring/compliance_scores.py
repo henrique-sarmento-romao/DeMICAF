@@ -1,24 +1,20 @@
-r"""Persist normalized CAF compliance scores for the audit eval set.
+r"""Persist normalized CAF compliance scores from the Reference Scheme Comparison.
 
-Reproduces the compliance score used in ``notebooks/federated/normalization.ipynb``:
-raw Mahalanobis distances against the CheXpert reference prior (the
-``Average Weighted`` federated scheme) are Gamma-normalised into a ``[0, 1]``
-compliance score (higher = more compliant) via a federated fit / aggregate /
-transform across the three training clients.
-
-The result is written once to ``Assets/Scores/compliance_normalized.csv`` so the
-audit pipeline can join compliance scores by ``image_path`` without re-fitting.
+Raw Mahalanobis distances against the CheXpert reference prior (the
+Aggregated federated scheme, see ``scripts/scoring/score.py``) are
+Gamma-normalised into a ``[0, 1]`` compliance score (higher = more compliant)
+via a federated fit / aggregate / transform across the three training clients.
 
 Usage
 -----
 ::
 
-    uv run python -m scripts.federated.compliance_scores
+    uv run python -m scripts.scoring.compliance_scores
 
 Output
 ------
-``Assets/Scores/compliance_normalized.csv``
-    Columns: ``image_path``, ``dataset``, ``mahalanobis`` (raw Average Weighted
+``results/reference_schemes/compliance_normalized.csv``
+    Columns: ``image_path``, ``dataset``, ``mahalanobis`` (raw Aggregated
     distance against the CheXpert prior), ``compliance`` (Gamma-normalised, [0, 1]).
 """
 
@@ -30,12 +26,12 @@ from pathlib import Path
 import pandas as pd
 
 from DeMICAF.caf.normalization import aggregate, fit, transform
-from DeMICAF.utils.paths import get_repo_root
+from DeMICAF.utils.paths import get_results_root
 
 # The compliance score = Mahalanobis distance to the CheXpert reference prior,
-# using the "Average Weighted" federated reference scheme (matches normalization.ipynb).
+# using the Aggregated federated reference scheme (see scripts/scoring/score.py).
 PRIOR_DATASET = "CheXpert"
-SCHEME_COLUMN = "CheXpert_Average_Weighted_mahala"
+SCHEME_COLUMN = "CheXpert_Aggregated_mahala"
 CLIENTS = ["ChestX-ray8", "MIMIC-CXR", "PadChest"]
 NORM_METHOD = "gamma"
 
@@ -46,8 +42,8 @@ def compute_compliance(scores_csv: Path) -> pd.DataFrame:
     Parameters
     ----------
     scores_csv
-        Path to ``Results/FA1/100k_MahalaScores.csv`` (one row per image, with a
-        ``CheXpert_Average_Weighted_mahala`` column).
+        Path to ``results/reference_schemes/100k_MahalaScores.csv`` (one row per
+        image, with a ``CheXpert_Aggregated_mahala`` column).
 
     Returns
     -------
@@ -71,21 +67,21 @@ def compute_compliance(scores_csv: Path) -> pd.DataFrame:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    repo_root = get_repo_root()
+    results_root = get_results_root() / "reference_schemes"
     parser = argparse.ArgumentParser(
-        description="Persist normalized CAF compliance scores for the audit eval set.",
+        description="Persist normalized CAF compliance scores from the Reference Scheme Comparison.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--scores-csv",
         type=Path,
-        default=repo_root / "Results" / "FA1" / "100k_MahalaScores.csv",
-        help="Raw FA1 Mahalanobis scores CSV.",
+        default=results_root / "100k_MahalaScores.csv",
+        help="Raw reference-scheme Mahalanobis scores CSV (see scripts/scoring/score.py).",
     )
     parser.add_argument(
         "--out-csv",
         type=Path,
-        default=repo_root / "Assets" / "Scores" / "compliance_normalized.csv",
+        default=results_root / "compliance_normalized.csv",
         help="Destination for the normalised compliance scores.",
     )
     return parser.parse_args(argv)

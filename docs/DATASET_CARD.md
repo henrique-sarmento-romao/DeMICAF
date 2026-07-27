@@ -1,8 +1,8 @@
-# Dataset Card — DeCaF Compliance Annotations
+# Dataset Card — DeMICAF Compliance Annotations
 
 ## Summary
 
-DeCaF provides manual **compliance annotations** for 4,000 frontal chest radiographs,
+DeMICAF provides manual **compliance annotations** for 4,000 frontal chest radiographs,
 1,000 drawn from each of four large public datasets. Each image is labelled *compliant*
 or *non-compliant*, and non-compliant images are tagged with one or more of seven
 non-compliance causes (see [`TAXONOMY.md`](TAXONOMY.md)). The purpose is to enable
@@ -84,7 +84,7 @@ the picked-reference experiments.
 
 ## Licensing
 
-- **Annotations** (`data/annotations/`): CC BY 4.0.
+- **Annotations** (`annotations/`): CC BY 4.0.
 - **Code**: MIT (see [`../LICENSE`](../LICENSE)).
 - **Source images**: governed by each provider's license / data-use agreement; not
   redistributed here.

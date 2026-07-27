@@ -174,30 +174,10 @@ mark-parentheses = false
 "tests/**/*.py" = ["S101", "SLF", "INP", "D1"]
 "scripts/**/*.py" = ["D1", "S101"]
 # matplotlib.use("Agg") must run before pyplot is imported.
-"scripts/centralised/configuration.py" = ["E402"]
-"scripts/centralised/plots/scores.py" = ["E402"]
-# Notebooks render results interactively: relax cosmetic rules (math symbols in labels,
-# broad excepts around optional cells, short variable names in plotting code).
-"notebooks/**" = [
-  "D1",
-  "E402",
-  "E501",
-  "E741",
-  "INP001",
-  "A004",
-  "B007",
-  "B018",
-  "BLE001",
-  "N8",
-  "PERF401",
-  "PTH",
-  "RUF001",
-  "RUF003",
-  "S101",
-  "SIM105",
-]
-"condor/**/*.py" = ["D1"]
-"configs/**/*.py" = ["D1", "INP001"]
+"scripts/scoring/score.py" = ["E402"]
+"scripts/scoring/generalization.py" = ["E402"]
+"scripts/scoring/configuration.py" = ["E402"]
+"scripts/benchmarking.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.13"

@@ -1,7 +1,7 @@
 r"""Extract penultimate-layer features and per-label probabilities from the classifier.
 
 One-time pass over the 3 client datasets' annotated images
-(``data/annotations/annotated_causes.csv`` restricted to ChestX-ray8/
+(``annotations/annotated_causes.csv`` restricted to ChestX-ray8/
 MIMIC-CXR/PadChest). A forward hook on the pooling layer captures the
 penultimate (pre-``fc``) feature in the same forward pass that produces the
 final logits, so both outputs come from a single inference pass per image:
@@ -22,7 +22,7 @@ consistent with what the model was actually trained/evaluated on.
 Typical usage::
 
     uv run python -m scripts.extract_classifier_features \
-        --checkpoint Results/PerCause/Classifier/fedavg_resnet18/seed_0/final_model.pt
+        --checkpoint results/per_cause/classifier/fedavg_resnet18/seed_0/final_model.pt
     uv run python -m scripts.extract_classifier_features --checkpoint ... --limit 20  # smoke test
 """
 
@@ -40,7 +40,7 @@ from tqdm import tqdm
 
 from DeMICAF.classifier import build_model, val_tfm
 from DeMICAF.data.datasets import DatasetCXR
-from DeMICAF.utils.paths import get_repo_root, resolve_path
+from DeMICAF.utils.paths import get_annotations_root, get_cxr_root, get_results_root, resolve_path
 
 CLIENTS = ["ChestX-ray8", "MIMIC-CXR", "PadChest"]
 LABEL_COLS = ["Cardiomegaly", "Atelectasis", "Nodule", "Alveolar Pattern", "Pleural Effusion", "Pneumothorax"]
@@ -127,23 +127,22 @@ def save_npz(path: Path, names: np.ndarray, values: np.ndarray) -> None:
 
 def parse_args() -> argparse.Namespace:
     """Define and parse command-line arguments."""
-    repo_root = get_repo_root()
     parser = argparse.ArgumentParser(
         description="Extract penultimate-layer features and per-label probabilities from the trained classifier."
     )
     parser.add_argument(
         "--annotations",
         type=Path,
-        default=repo_root / "data" / "annotations" / "annotated_causes.csv",
+        default=get_annotations_root() / "annotated_causes.csv",
     )
-    parser.add_argument("--data-root", type=str, default="/eos/user/h/hpestana/CXR")
+    parser.add_argument("--data-root", type=str, default=str(get_cxr_root()))
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--architecture", type=str, default="resnet18", choices=["resnet18", "resnet152"])
     parser.add_argument("--dropout-rate", type=float, default=0.1)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--out-dir", type=Path, default=repo_root / "Results" / "PerCause")
+    parser.add_argument("--out-dir", type=Path, default=get_results_root() / "per_cause")
     parser.add_argument("--limit", type=int, default=None, help="Process at most N images per client (smoke test).")
     return parser.parse_args()
 

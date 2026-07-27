@@ -1,15 +1,12 @@
 """Compliance scoring functions: Mahalanobis distance (MD) and cosine-similarity k-NN (CS)."""
 
 from collections.abc import Sequence
-from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 from scipy.stats import chi2
 from sklearn.cluster import KMeans
 from sklearn.covariance import LedoitWolf
-from tqdm import tqdm
 
 
 def reference_vector(ref_data: np.ndarray, regularization: float = 1e-5) -> tuple[np.ndarray, np.ndarray]:
@@ -158,94 +155,3 @@ def cosine_sim(
         knn_distances[start_idx:end_idx] = torch.arccos(top_k_values.mean(dim=1))
 
     return knn_distances.cpu()
-
-
-def score(
-    mahala_k: Sequence[int],
-    cossim_k: Sequence[int],
-    score_path: str | Path,
-    reference_feat_file: str | Path,
-    score_feat_file: str | Path | None = None,
-) -> None:
-    """Compute MD and CS score columns for a feature file and persist them to a CSV."""
-    # get features
-    if score_feat_file is None:
-        score_feat_file = reference_feat_file
-
-    reference_loaded = np.load(reference_feat_file, allow_pickle=True)
-    score_loaded = np.load(score_feat_file, allow_pickle=True)
-    if hasattr(reference_loaded, "files"):
-        reference_feats = reference_loaded[reference_loaded.files[0]]
-    else:
-        reference_feats = reference_loaded
-    score_feats = score_loaded[score_loaded.files[0]] if hasattr(score_loaded, "files") else score_loaded
-
-    # Create score csv if it does not exist
-    score_path = Path(score_path)
-    if not score_path.exists():
-        df_rank = pd.DataFrame({"Study": score_feats[:, 0]})
-        score_path.parent.mkdir(parents=True, exist_ok=True)
-        df_rank.to_csv(score_path, index=False)
-    else:
-        df_rank = pd.read_csv(score_path)
-
-    # Create one combined iterator with labels
-    tasks = [("MD", k) for k in mahala_k] + [("CS", k) for k in cossim_k]
-    for method, k in tqdm(tasks, desc="Scoring", leave=True, unit="step"):
-        ref_feats = reference_feats[:, 1:].astype(np.float32)
-        scr_feats = score_feats[:, 1:].astype(np.float32)
-        if method == "MD":
-            md_rank, _ = mahalanobis(ref_feats, scr_feats, k=k)
-            df_rank[f"MD k{k}"] = md_rank
-        else:
-            df_rank[f"CS k{k}"] = cosine_sim(ref_feats, scr_feats, k=k).numpy()
-
-        score_path.parent.mkdir(parents=True, exist_ok=True)
-        df_rank.to_csv(score_path, index=False)
-
-
-def main() -> None:
-    """Score the configured feature files with a sweep of MD and CS parameters."""
-    # DECIDE WHICH FEATURES TO SCORE
-    features = []
-
-    # CXR
-    for framework in ["SimCLR", "CSI", "SupCon", "UniCon", "UniConSA"]:
-        for dataset in ["CheXpert", "PadChest", "ChestX-ray8", "MIMIC-CXR", "All"]:
-            ref_path = f"Results/Features/CXR/{dataset}/{framework}_model_reference.npz"
-            ann_path = f"Results/Features/CXR/{dataset}/{framework}_model_annotations.npz"
-            features.append((ref_path, ann_path))
-
-    # TotalSegmentator
-    # for organ in ["Lungs", "Heart", "Liver", "Brain"]:
-    #     for input in ["Segmentation", "Image", "Border"]:
-    #         for framework in ["SimCLR", "CSI", "SupCon", "UniCon", "UniConSA"]:
-    #             for model in ["model"]:
-    #                 for agg_fn in ["mean"]:
-    #                     path = f"Results/Features/TotalSegmentator/{organ}/{input}/{framework}_{model}_{agg_fn}.npz"
-    #                     features.append((path,))
-    # # Automi
-    # for target in ["CTV", "PTV"]:
-    #     for input in ["Segmentation", "Image", "Border"]:
-    #         for framework in ["SimCLR", "CSI", "SupCon", "UniCon", "UniConSA"]:
-    #             for model in ["model"]:
-    #                 for agg_fn in ["mean"]:
-    #                     path = f"Results/Features/Automi/{target}/{input}/{framework}_{model}_{agg_fn}.npz"
-    #                     features.append((path,))
-
-    # SCORER
-    mahala_k = [1, 3, 5, 7, 10, 15, 20, 50, 100]
-    cossim_k = [1, 5, 10, 25, 50, 100, 200, 500]
-
-    # mahala_k = [20]
-    # cossim_k = []
-    for features_paths in features:
-        ref_path = features_paths[0]
-        features_path = features_paths[1] if len(features_paths) > 1 else ref_path
-
-        score_path = features_path.replace("Features", "Scores").replace(".npz", ".csv").replace("_annotations", "")
-        score(mahala_k, cossim_k, score_path, ref_path, features_path)
-
-
-if __name__ == "__main__":
-    main()

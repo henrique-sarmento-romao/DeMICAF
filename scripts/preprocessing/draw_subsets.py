@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 import random
 from pathlib import Path
 
-DATA_ROOT = Path(os.environ.get("CXR_ROOT", "data/chest_xray"))
+from DeMICAF.utils.paths import get_cxr_root
 
 TARGET_10K = 10_000
 TARGET_100K = 100_000
@@ -106,9 +105,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-root",
         type=Path,
-        default=DATA_ROOT,
+        default=get_cxr_root(),
         help="Root holding <Dataset>/<metadata>.csv and <Dataset>/annotations.csv "
-        "(default: $CXR_ROOT or data/chest_xray).",
+        "(default: $CXR_ROOT or <repo_root>/data/chest_xray).",
     )
     return parser.parse_args()
 

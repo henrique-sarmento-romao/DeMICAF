@@ -19,14 +19,14 @@ from tqdm import tqdm
 
 from DeMICAF.caf.encoder import encode, train
 from DeMICAF.caf.scorer import mahalanobis_distance, reference_vector
-from DeMICAF.data.base import AugmentedDataset, DatasetBase, RandomPatchDataset, multi_view_collate
+from DeMICAF.data.base import AugmentedDataset, DatasetBase, multi_view_collate
 from DeMICAF.data.datasets import ChestXray, ChestXrayDataset
 from DeMICAF.evaluation.auc import compute_auc, compute_fpr_at_tpr
 from DeMICAF.utils.colors import COLOR_DICT
 from DeMICAF.utils.io import load_features
 from DeMICAF.utils.io import upsert_scores_csv as save_scores_csv
-from DeMICAF.utils.paths import get_repo_root
-from DeMICAF.utils.plotting import apply_thesis_style
+from DeMICAF.utils.paths import get_cxr_root, get_results_root
+from DeMICAF.utils.plotting import apply_paper_style
 from DeMICAF.utils.seeding import seed_worker, set_seed
 
 study = "Generalization"
@@ -89,14 +89,14 @@ def export_methods_table(csv_path: Path, caption: str, label: str, percentage=Tr
     ]
 
     for ref_type, multirow, row_order in [
-        ("Self", r"\multirow[c]{7}{*}{\shortstack{S\\e\\l\\f}}", SELF_ORDER),
-        ("Encoder", r"\multirow[c]{5}{*}{\shortstack{E\\n\\c\\o\\d\\e\\r}}", ENCODER_ORDER),
+        ("Adaptive", r"\multirow[c]{7}{*}{\shortstack{S\\e\\l\\f}}", SELF_ORDER),
+        ("Prior", r"\multirow[c]{5}{*}{\shortstack{E\\n\\c\\o\\d\\e\\r}}", ENCODER_ORDER),
     ]:
         ref_rows = df[df["Reference"].str.lower() == ref_type.lower()]
         if ref_rows.empty:
             continue
 
-        if ref_type == "Encoder":
+        if ref_type == "Prior":
             lines.append(r"        \hhline{========}")
 
         # Hard-enforce vertical order
@@ -105,7 +105,7 @@ def export_methods_table(csv_path: Path, caption: str, label: str, percentage=Tr
 
         for idx, (_, row) in enumerate(ref_rows.iterrows()):
             # Hard-coded separator between "All" (idx=4) and "ImageNet" (idx=5) in Self group
-            if ref_type == "Self" and idx == 5:
+            if ref_type == "Adaptive" and idx == 5:
                 lines.append(r"        \hhline{~|=======}")
 
             row_dict = row.to_dict()
@@ -133,7 +133,7 @@ def export_methods_table(csv_path: Path, caption: str, label: str, percentage=Tr
             lines.append("        " + " & ".join(row_list) + r" \\")
 
             is_last = idx == total - 1
-            is_before_hhline = ref_type == "Self" and idx == 4  # suppress \cline before \hhline
+            is_before_hhline = ref_type == "Adaptive" and idx == 4  # suppress \cline before \hhline
             if not is_last and not is_before_hhline:
                 lines.append(r"        \cline{2-8}")
 
@@ -176,18 +176,18 @@ def export_scaling_table(subset_tables: dict, caption: str, label: str, outdir: 
     ]
 
     for ref_type, multirow, row_order in [
-        ("Self", r"\multirow[c]{7}{*}{\shortstack{S\\e\\l\\f}}", SELF_ORDER),
-        ("Encoder", r"\multirow[c]{5}{*}{\shortstack{E\\n\\c\\o\\d\\e\\r}}", ENCODER_ORDER),
+        ("Adaptive", r"\multirow[c]{7}{*}{\shortstack{S\\e\\l\\f}}", SELF_ORDER),
+        ("Prior", r"\multirow[c]{5}{*}{\shortstack{E\\n\\c\\o\\d\\e\\r}}", ENCODER_ORDER),
     ]:
         ref_rows = [df[df["Reference"].str.lower() == ref_type.lower()] for df in dfs]
         if all(r.empty for r in ref_rows):
             continue
-        if ref_type == "Encoder":
+        if ref_type == "Prior":
             lines.append(r"        \hhline{========}")
         ref_rows = [r.set_index("Encoder").reindex(row_order).reset_index() for r in ref_rows]
         total = len(row_order)
         for idx in range(total):
-            if ref_type == "Self" and idx == 5:
+            if ref_type == "Adaptive" and idx == 5:
                 lines.append(r"        \hhline{~|=======}")
             row_list = []
             row_list.append(multirow if idx == 0 else "")
@@ -222,7 +222,7 @@ def export_scaling_table(subset_tables: dict, caption: str, label: str, outdir: 
                     row_list.append(cell)
             lines.append("        " + " & ".join(row_list) + r" \\")
             is_last = idx == total - 1
-            is_before_hhline = ref_type == "Self" and idx == 4
+            is_before_hhline = ref_type == "Adaptive" and idx == 4
             if not is_last and not is_before_hhline:
                 lines.append(r"        \cline{2-8}")
     lines.append(r"        \hline")
@@ -272,8 +272,8 @@ generalization_de_domain = [
 
 #: (display label, Reference value, D_E x-axis domain) per reference scheme.
 generalization_reference_specs = [
-    ("Prior", "Encoder", [name for name in generalization_de_domain if name != "ImageNet"]),
-    ("Adaptive", "Self", generalization_de_domain),
+    ("Prior", "Prior", [name for name in generalization_de_domain if name != "ImageNet"]),
+    ("Adaptive", "Adaptive", generalization_de_domain),
 ]
 
 
@@ -289,7 +289,7 @@ def export_generalization_plots(
     metric. The x-axis is the encoder training data :math:`\mathcal{D}_E`; one
     line per scoring (client) data :math:`\mathcal{D}_k`
     (:data:`generalization_scoring_datasets`), colored consistently with the
-    rest of the thesis figures (:data:`DeMICAF.utils.colors.COLOR_DICT`). AUC
+    rest of the paper's figures (:data:`DeMICAF.utils.colors.COLOR_DICT`). AUC
     lines are solid, FPR@95TPR lines are dashed.
 
     The Prior/Adaptive pair for each metric shares one y-axis scale (AUC on
@@ -302,7 +302,7 @@ def export_generalization_plots(
         ("fpr95", fpr_csv_path, "FPR@95TPR (%)", "--"),
     ]
 
-    apply_thesis_style()
+    apply_paper_style()
 
     dataframes: dict[str, pd.DataFrame] = {}
     for metric_key, csv_path, _, _ in metric_specs:
@@ -437,7 +437,7 @@ def export_generalization_legend(plot_dir: Path) -> None:
     (:data:`generalization_de_domain`) under "$\\mathcal{D}_E$", centered on
     its own.
     """
-    apply_thesis_style()
+    apply_paper_style()
 
     de_handles = [plt.Line2D([], [], linestyle="none") for _ in generalization_de_domain]
     de_labels = [f"{generalization_dataset_abbrev[d_e]} = {_display_label(d_e)}" for d_e in generalization_de_domain]
@@ -537,10 +537,9 @@ def main() -> None:
     set_seed(0)
     mp.set_start_method("spawn", force=True)
 
-    repo_root = get_repo_root()
-    assets_root = repo_root / "Assets"
-    results_root = repo_root / "Results" / study
-    data_root = Path("dvc/chest_xray")
+    assets_root = get_results_root()
+    results_root = get_results_root() / "generalization"
+    data_root = get_cxr_root()
 
     encoder_names = [*base_datasets, "ImageNet", "Aggregated", "All"]
 
@@ -558,7 +557,7 @@ def main() -> None:
         datasets: dict[str, DatasetBase] = {}
         models_by_combo: dict[str, str] = {}
 
-        scores_filename = assets_root / "Scores" / study / f"{subset}_{score_name}.csv"
+        scores_filename = assets_root / "scores" / "generalization" / f"{subset}_{score_name}.csv"
 
         # GET DATASETS
         if run_train or run_features or run_score:
@@ -610,17 +609,16 @@ def main() -> None:
 
                 date = datetime.datetime.now().strftime("%b_%d_%H_%M")
                 modelname = date
-                saveto_path = assets_root / "Encoders" / dataset_name / subset / modelname
+                saveto_path = assets_root / "encoders" / subset / dataset_name / modelname
                 saveto_path.mkdir(parents=True, exist_ok=True)
 
                 encoder = dataset.get_network(bn_head=True, normalize_f=True).to(device)
                 optimizer = torch.optim.Adam(encoder.parameters(), lr=l_r)
 
                 view_dataset = AugmentedDataset(dataset, transforms=copy.deepcopy(ChestXray))
-                train_ds = RandomPatchDataset(view_dataset) if hasattr(view_dataset, "patch_size") else view_dataset
 
                 dataloader = DataLoader(
-                    train_ds,
+                    view_dataset,
                     batch_size=batch_size,
                     shuffle=True,
                     num_workers=num_workers,
@@ -641,7 +639,7 @@ def main() -> None:
                     framework=framework,
                 )
 
-                del dataloader, train_ds
+                del dataloader
                 torch.cuda.empty_cache()
 
                 models_by_combo[dataset_name] = modelname
@@ -652,7 +650,7 @@ def main() -> None:
             state_dicts = []
             for dataset_name in datasets:
                 modelname = models_by_combo.get(dataset_name, "SupCon")
-                model_path = assets_root / "Encoders" / subset / dataset_name / modelname / "model.pt"
+                model_path = assets_root / "encoders" / subset / dataset_name / modelname / "model.pt"
                 if not model_path.exists():
                     raise FileNotFoundError(f"Expected model checkpoint not found at: {model_path}")
                 state_dicts.append(torch.load(model_path, map_location="cpu"))
@@ -671,7 +669,7 @@ def main() -> None:
                 else:
                     aggregated_state_dict[key] = tensors[0]
 
-            aggregate_model_path = assets_root / "Encoders" / subset / "Aggregated" / timestamp / "model.pt"
+            aggregate_model_path = assets_root / "encoders" / subset / "Aggregated" / timestamp / "model.pt"
             aggregate_model_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(aggregated_state_dict, aggregate_model_path)
             models_by_combo["Aggregated"] = timestamp
@@ -693,7 +691,7 @@ def main() -> None:
             encoder_list = [encoder_name for encoder_name in encoder_names if encoder_name != "ImageNet"]
             for encoder in encoder_list:
                 modelname = models_by_combo.get(encoder, "SupCon")
-                model_path = assets_root / "Encoders" / subset / encoder / modelname / "model.pt"
+                model_path = assets_root / "encoders" / subset / encoder / modelname / "model.pt"
                 encoders[encoder] = datasets["CheXpert"].get_network(bn_head=True, normalize_f=True).to(device)
                 encoders[encoder].load_state_dict(torch.load(model_path, map_location=device))
             encoders["ImageNet"] = ImageNetResNet18Features().to(device)
@@ -718,7 +716,7 @@ def main() -> None:
                 )
 
                 for encoder_name, encoder in encoders.items():
-                    features_path = assets_root / "Features" / subset / f"{dataset_name}_using_{encoder_name}.npz"
+                    features_path = assets_root / "features" / subset / f"{dataset_name}_using_{encoder_name}.npz"
                     encode(dataloader, encoder, features_path, desc=encoder_name)
                     print(f"Saved to {features_path}")
 
@@ -745,7 +743,7 @@ def main() -> None:
                 score_names_parts, score_feats_parts = [], []
                 for dataset_name in base_datasets:
                     refer_names[dataset_name], refer_feats[dataset_name] = load_features(
-                        assets_root / "Features" / subset / f"{dataset_name}_using_{encoder_name}.npz"
+                        assets_root / "features" / subset / f"{dataset_name}_using_{encoder_name}.npz"
                     )
                     refer_names_parts.append(refer_names[dataset_name][: subset_samples // 4])
                     refer_feats_parts.append(refer_feats[dataset_name][: subset_samples // 4])
@@ -791,14 +789,14 @@ def main() -> None:
                         score_names["Holdout"] = refer_names["Holdout"]
                         score_feats["Holdout"] = refer_feats["Holdout"]
 
-                for reference_mode in ["encoder", "self"]:
-                    if reference_mode == "encoder" and encoder_name not in [*base_datasets, "All"]:
+                for reference_mode in ["prior", "adaptive"]:
+                    if reference_mode == "prior" and encoder_name not in [*base_datasets, "All"]:
                         continue
                     scoring_method = reference_mode.capitalize() + "_" + encoder_name
                     print(f"{encoder_name} {subset} [{reference_mode.capitalize()} Reference]")
 
                     mean, cov = None, None
-                    if reference_mode == "encoder":
+                    if reference_mode == "prior":
                         mean, cov = reference_vector(refer_feats[encoder_name])
 
                     # Iterate over evaluation sets and their features
@@ -810,7 +808,7 @@ def main() -> None:
                     )
                     for eval_set in eval_set_iterator:
                         image_names = score_names[eval_set]
-                        if reference_mode == "self":
+                        if reference_mode == "adaptive":
                             ref_mean, ref_cov = reference_vector(refer_feats[eval_set])
                         else:
                             if mean is None or cov is None:
@@ -845,8 +843,8 @@ def main() -> None:
             auc_rows = []
             fpr_rows = []
             for encoder_name in encoder_names:
-                for reference_mode in ["Encoder", "Self"]:
-                    if reference_mode == "Encoder" and encoder_name not in [*base_datasets, "All"]:
+                for reference_mode in ["Prior", "Adaptive"]:
+                    if reference_mode == "Prior" and encoder_name not in [*base_datasets, "All"]:
                         continue
                     scoring_method = reference_mode.capitalize() + "_" + encoder_name
 

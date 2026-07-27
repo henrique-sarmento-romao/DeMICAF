@@ -11,8 +11,7 @@ data/chest_xray/
 *.db
 
 # Generated outputs
-Results/
-Assets/Scores/
+results/
 *.npz
 *.pt
 *.mp4

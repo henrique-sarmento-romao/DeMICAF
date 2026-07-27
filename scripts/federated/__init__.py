@@ -1,1 +1,1 @@
-"""Entry points for training the DeCaF pathology classifier via FedAvg."""
+"""Entry points for training the DeMICAF pathology classifier via FedAvg."""

@@ -25,7 +25,7 @@
     {
       "id": "area_not_valid",
       "name": "Area Not Valid",
-      "description": "Images where less than approximately 80% of the frame is valid thoracic content, with the invalid area typically caused by collimation problems, cropping, or acquisition artifacts. Split out of 'Image Quality Problems' as a dedicated category given its high recurrence. TODO(author): confirm the exact clinical wording before public release.",
+      "description": "Images where less than approximately 80% of the frame is valid thoracic content, with the invalid area typically caused by collimation problems, cropping, or acquisition artifacts. Split out of 'Image Quality Problems' as a dedicated category given its high recurrence.",
       "notes": "Added after the initial protocol (previously subsumed under Image Quality Problems)."
     },
     {

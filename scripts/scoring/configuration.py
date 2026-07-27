@@ -1,3 +1,12 @@
+"""Loss/scorer ablation: contrastive framework and ranking-function comparison.
+
+Backs Sec. 5's claim that "we use SupCon loss ... and unclustered MD for
+Scoring, as they brought the best performance on our annotations": trains
+encoders under each of SimCLR/CSI/UniCon/UniConSA (SupCon is trained
+separately, see ``scripts/scoring/generalization.py``), then sweeps clustered
+Mahalanobis and kNN-cosine scorers to compare against unclustered MD.
+"""
+
 import argparse
 import copy
 import datetime
@@ -9,7 +18,6 @@ import torch
 import torch.multiprocessing as mp
 
 matplotlib.use("Agg")
-from pathlib import Path
 
 import matplotlib.colors
 import matplotlib.pyplot as plt
@@ -25,10 +33,9 @@ from DeMICAF.data.datasets import ChestXray, ChestXrayDataset
 from DeMICAF.evaluation.auc import compute_auc
 from DeMICAF.utils.io import load_features
 from DeMICAF.utils.io import upsert_scores_csv as save_scores_csv
-from DeMICAF.utils.paths import get_repo_root
+from DeMICAF.utils.paths import get_cxr_root, get_results_root
 from DeMICAF.utils.seeding import seed_worker, set_seed
 
-study = "DataExtension"
 CONTRASTIVE_LOSSES = ["SimCLR", "CSI", "UniCon", "UniConSA"]  # , "SupCon" already computed
 TARGET_DATASETS = ["CheXpert", "All"]
 BASE_DATASETS = ["CheXpert", "ChestX-ray8", "MIMIC-CXR", "PadChest"]
@@ -94,10 +101,9 @@ def main() -> None:
     set_seed(0)
     mp.set_start_method("spawn", force=True)
 
-    repo_root = get_repo_root()
-    assets_root = repo_root / "Assets"
-    results_root = repo_root / "Reporting" / "Results" / study
-    data_root = Path("dvc/chest_xray")
+    assets_root = get_results_root()
+    results_root = get_results_root() / "loss_scorer_ablation"
+    data_root = get_cxr_root()
 
     for subset in subsets:
         subset_name = "annotations.csv" if subset == "1k" else f"subset{subset}.csv"
@@ -146,7 +152,7 @@ def main() -> None:
                 ):
                     date = datetime.datetime.now().strftime("%b_%d_%H_%M")
                     modelname = loss + "_" + date
-                    saveto_path = assets_root / "Encoders" / subset / dataset_name / modelname
+                    saveto_path = assets_root / "encoders" / subset / dataset_name / modelname
                     saveto_path.mkdir(parents=True, exist_ok=True)
 
                     encoder = dataset.get_network(bn_head=True, normalize_f=True).to(DEVICE)
@@ -193,7 +199,7 @@ def main() -> None:
                 for loss in CONTRASTIVE_LOSSES:
                     encoder_name = dataset_name + "_" + loss
                     modelname = model_names.get(encoder_name, loss)
-                    model_path = assets_root / "Encoders" / subset / dataset_name / modelname / "model.pt"
+                    model_path = assets_root / "encoders" / subset / dataset_name / modelname / "model.pt"
 
                     encoders[encoder_name] = datasets["CheXpert"].get_network(bn_head=True, normalize_f=True).to(DEVICE)
                     encoders[encoder_name].load_state_dict(torch.load(model_path, map_location=DEVICE))
@@ -222,7 +228,7 @@ def main() -> None:
                     if loss != "SupCon":
                         features_filename += "_" + loss
                     features_filename += ".npz"
-                    features_path = assets_root / "Features" / subset / features_filename
+                    features_path = assets_root / "features" / subset / features_filename
 
                     encode(dataloader, encoder, features_path, desc=f"Using {encoder_name}")
 
@@ -235,14 +241,14 @@ def main() -> None:
                 print(f"\n--- Encoder trained on {encoder_dataset} ---")
                 for loss in [*CONTRASTIVE_LOSSES, "SupCon"]:
                     print(f"Using {loss} loss...")
-                    score_file = assets_root / "Scores" / "DataExtension" / f"{subset}_{encoder_dataset}_{loss}.csv"
+                    score_file = assets_root / "scores" / "loss_scorer_ablation" / f"{subset}_{encoder_dataset}_{loss}.csv"
 
                     all_feats: dict[str, np.ndarray] = {}
                     all_names: dict[str, np.ndarray] = {}
                     for dataset_name in BASE_DATASETS:
                         encoder_name = encoder_dataset + "_" + loss if loss != "SupCon" else encoder_dataset
                         all_names[dataset_name], all_feats[dataset_name] = load_features(
-                            assets_root / "Features" / subset / f"{dataset_name}_using_{encoder_name}.npz"
+                            assets_root / "features" / subset / f"{dataset_name}_using_{encoder_name}.npz"
                         )
                     # Concatenate features and names from all datasets to create "All"
                     all_feats["All"] = np.concatenate([all_feats[ds] for ds in BASE_DATASETS], axis=0)
@@ -289,7 +295,7 @@ def main() -> None:
                 auc_row = {"Encoder Dataset": encoder_dataset}
                 for loss in [*CONTRASTIVE_LOSSES, "SupCon"]:
                     auc_row["Loss"] = loss
-                    scores_df = pd.read_csv(assets_root / "Scores" / study / f"{subset}_{encoder_dataset}_{loss}.csv")
+                    scores_df = pd.read_csv(assets_root / "scores" / "loss_scorer_ablation" / f"{subset}_{encoder_dataset}_{loss}.csv")
 
                     for scoring in tqdm(
                         [score for score in scores_df.columns if score not in ["image_path", "dataset"]],
@@ -434,8 +440,6 @@ def main() -> None:
                         format="pdf",
                         bbox_inches="tight",
                     )
-                    # fig.savefig(results_root / f"SofiaReplicated.pdf", format="pdf", bbox_inches="tight")
-
                     plt.close(fig)
 
 

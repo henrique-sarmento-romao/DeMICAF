@@ -1,10 +1,10 @@
 """Pathology classifier shared by the federated training pipeline.
 
-Ported from the sibling private repo's ``data_compliance.classifier`` (same
-architecture, transforms, and loss) so DeCaF can train and ship its own
-checkpoint — only the FL-path pieces are kept; the standalone centralized
-``train``/``train_epoch`` helpers are not needed here (``federated.server``
-implements its own centralized loop).
+A grayscale-adapted ResNet-18/152 multi-label classifier used as the FedAvg
+baseline pathology model (``scripts/federated/train.py``), whose penultimate
+features and per-label logits feed the per-cause benchmark's ``knn``/
+``maha_pp``/``gen`` baselines. ``federated.server`` implements its own
+centralized training loop, so only the FL-path pieces live here.
 """
 
 from __future__ import annotations

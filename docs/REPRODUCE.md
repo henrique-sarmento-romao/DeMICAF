@@ -35,7 +35,7 @@ python -m scripts.stats.eda --out out/eda
 
 ## 2. Annotation database (provenance)
 
-The released `data/annotations/annotated_causes.csv` is the canonical artifact. To
+The released `annotations/annotated_causes.csv` is the canonical artifact. To
 rebuild it from raw per-annotator exports:
 
 ```bash
@@ -44,7 +44,7 @@ python -m scripts.preprocessing.make_database --raw-dir path/to/raw_csvs --db-ou
 
 # Flatten the DB back into the wide annotated_causes.csv (+ optional per-dataset splits)
 python -m scripts.preprocessing.export_annotations --db annotations.db \
-    --out data/annotations/annotated_causes.csv --per-dataset
+    --out annotations/annotated_causes.csv --per-dataset
 ```
 
 ## 3. Image subsets (needs `$CXR_ROOT`)
@@ -62,26 +62,47 @@ Outputs `subset10k.csv` / `subset100k.csv` under each `$CXR_ROOT/<Dataset>/`.
 # Minimal end-to-end: load images, extract features, Mahalanobis score, AUC vs. annotations
 python -m examples.quickstart --checkpoint path/to/encoder.pt
 
-# Contrastive-loss / ranking-function comparison
-python -m scripts.scoring.configuration
+# Generalisation Analysis (Fig. 4): cross-dataset encoder generalization + size scaling,
+# under the Prior/Adaptive reference schemes. Only run the 100k scale for the paper's
+# reported setting:
+python -m scripts.scoring.generalization --subset 100k
 
-# Cross-dataset encoder generalization + size scaling
-python -m scripts.scoring.generalization
-
-# Federated static-encoder scoring under different reference schemes
+# Reference Scheme Comparison (Fig. 5): federated static-encoder scoring under the
+# Prior / Aggregated / Compliant reference schemes
 python -m scripts.scoring.score
 
+# Loss/scorer ablation backing Sec. 5's choice of SupCon + unclustered Mahalanobis
+python -m scripts.scoring.configuration
+
 # Normalize / aggregate raw Mahalanobis scores into compliance scores
-python -m scripts.scoring.compliance_scores --scores-csv raw_scores.csv --out-csv compliance_normalized.csv
+python -m scripts.scoring.compliance_scores
+```
+
+## 5. Per-cause benchmark (Table 1, needs `$CXR_ROOT`)
+
+Full protocol: [`docs/PER_CAUSE_BENCHMARK.md`](PER_CAUSE_BENCHMARK.md).
+
+```bash
+# NR-IQA baselines (NIQE, BRISQUE) vs. annotations, feeding scripts.benchmarking's cache
+python -m scripts.baseline
+
+# FedAvg pathology classifier (feeds the knn/maha_pp/gen baselines)
+python -m scripts.federated.train
+
+# Penultimate features + per-label probabilities from the trained classifier
+python -m scripts.extract_classifier_features --checkpoint results/per_cause/classifier/fedavg_resnet18/seed_0/final_model.pt
+
+# DeMICAF vs. every baseline, per non-compliance cause
+python -m scripts.benchmarking
 ```
 
 The scoring scripts expect pre-computed features / encoders and write their outputs to
-paths overridable via CLI flags. Evaluate any score column against the annotations with
-`DeMICAF.evaluation.auc.compute_auc` (positive class = *compliant* by default);
-use `filter_cause` to compute a per-cause AUC.
+`results/<experiment>/`, overridable via CLI flags. Evaluate any score column against
+the annotations with `DeMICAF.evaluation.auc.compute_auc` (positive class = *compliant*
+by default); use `filter_cause` to compute a per-cause AUC.
 
 ## Notes
 
 - Reproducibility relies on the global RNG seeded via `DeMICAF.utils.seeding`
   and the fixed `RNG_SEED = 42` in the sampling scripts.
-- Override the repository root with `DECAF_ROOT` if running from a relocated checkout.
+- Override the repository root with `DEMICAF_ROOT` if running from a relocated checkout.

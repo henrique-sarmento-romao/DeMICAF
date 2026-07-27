@@ -1,9 +1,11 @@
-"""Federated scoring with a static (frozen) encoder (thesis phase FA1).
+"""Reference Scheme Comparison: federated scoring with a static (frozen) encoder.
 
-Each client scores its images against reference statistics that are either
-independent (encoder's own data), federated averages of client statistics,
-or built from a few picked compliant samples. AUCs against the manual
-compliance annotations are exported as LaTeX tables.
+Each client scores its images against a reference (Sec. 4/5 of the paper) that
+is either the client-agnostic Prior (the encoder's own training-time reference),
+the Aggregated federated average of client statistics, or a Compliant reference
+built from a few clinician-picked compliant samples. AUCs/APs/FPR@95TPR against
+the manual compliance annotations are exported as LaTeX tables and figures
+(Fig. 5).
 """
 
 import argparse
@@ -21,17 +23,16 @@ from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 
 from DeMICAF.caf.scorer import mahalanobis_distance, reference_vector
 from DeMICAF.utils.io import upsert_scores_csv as _upsert_scores_csv
-from DeMICAF.utils.plotting import apply_thesis_style
+from DeMICAF.utils.paths import get_cxr_root, get_results_root
+from DeMICAF.utils.plotting import apply_paper_style
 
 datasets = ["CheXpert", "MIMIC-CXR", "ChestX-ray8", "PadChest"]
 picked_samples = [1, 2, 5, 10, 20, 50, 100]
 n_iter = 10
 
-workspace_root = Path(__file__).resolve().parents[3]
-results_root = workspace_root / "Results" / "DeMICAF"
-data_root = Path("/eos/user/h/hpestana/CXR")
-repo_root = Path(__file__).resolve().parents[2]
-niqe_baseline_csv_path = repo_root / "Results" / "Baseline" / "perceptual_iqa_metrics.csv"
+results_root = get_results_root() / "reference_schemes"
+data_root = get_cxr_root()
+niqe_baseline_csv_path = get_results_root() / "baseline" / "perceptual_iqa_metrics.csv"
 
 
 def upsert_scores_csv(
@@ -363,12 +364,12 @@ def save_metrics(
         df = pd.DataFrame([row])
 
     method_order = [
-        "Independent",
-        "Average",
-        "Picked_1_Samples",
-        "Picked_3_Samples",
-        "Picked_5_Samples",
-        "Picked_10_Samples",
+        "Prior",
+        "Aggregated",
+        "Compliant_1_Samples",
+        "Compliant_3_Samples",
+        "Compliant_5_Samples",
+        "Compliant_10_Samples",
     ]
     encoder_order = datasets
     if "method" in df.columns and "encoder" in df.columns:
@@ -386,8 +387,8 @@ def save_metrics(
     df.to_csv(csv_path, index=False)
 
 
-def export_independent_auc_table(csv_path: Path, tex_path: Path) -> None:
-    """Export Independent-only table with per-encoder row and dataset/holdout columns."""
+def export_prior_auc_table(csv_path: Path, tex_path: Path) -> None:
+    """Export Prior-only table with per-encoder row and dataset/holdout columns."""
     csv_path = Path(csv_path)
     if not csv_path.exists():
         raise FileNotFoundError(f"AUC CSV not found: {csv_path}")
@@ -396,12 +397,12 @@ def export_independent_auc_table(csv_path: Path, tex_path: Path) -> None:
     required_columns = ["method", "encoder", "CheXpert", "ChestX-ray8", "MIMIC-CXR", "PadChest", "Holdout"]
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
-        raise ValueError(f"Missing required columns for independent table: {missing}")
+        raise ValueError(f"Missing required columns for prior table: {missing}")
 
-    independent_df = df[df["method"] == "Independent"].copy()
+    prior_df = df[df["method"] == "Prior"].copy()
 
     def value_for(encoder: str, column: str) -> str:
-        row = independent_df[independent_df["encoder"] == encoder]
+        row = prior_df[prior_df["encoder"] == encoder]
         if row.empty:
             return ""
         value = row.iloc[-1][column]
@@ -489,24 +490,28 @@ def export_methods_holdout_table(csv_path: Path, tex_path: Path) -> None:
         r"        \hline",
         r"        \hline",
         "        "
-        + "\\multicolumn{2}{c|}{Independent} & "
-        + " & ".join(encoder_values("Independent"))
+        + "\\multicolumn{2}{c|}{Prior} & "
+        + " & ".join(encoder_values("Prior"))
         + " "
         + chr(92) * 2,
         r"        \hline",
-        "        " + "\\multicolumn{2}{c|}{Average} & " + " & ".join(encoder_values("Average")) + " " + chr(92) * 2,
+        "        "
+        + "\\multicolumn{2}{c|}{Aggregated} & "
+        + " & ".join(encoder_values("Aggregated"))
+        + " "
+        + chr(92) * 2,
     ]
 
     lines.extend(
         [
             r"        \hline",
-            row("\\multirow{4}{*}{Picked}", "1 Sample", encoder_values("Picked_1_Samples")),
+            row("\\multirow{4}{*}{Compliant}", "1 Sample", encoder_values("Compliant_1_Samples")),
             r"        \cline{2-6}",
-            row("", "3 Samples", encoder_values("Picked_3_Samples")),
+            row("", "3 Samples", encoder_values("Compliant_3_Samples")),
             r"        \cline{2-6}",
-            row("", "5 Samples", encoder_values("Picked_5_Samples")),
+            row("", "5 Samples", encoder_values("Compliant_5_Samples")),
             r"        \cline{2-6}",
-            row("", "10 Samples", encoder_values("Picked_10_Samples")),
+            row("", "10 Samples", encoder_values("Compliant_10_Samples")),
             r"        \hline",
             r"    \end{tabular}",
             r"\end{table}",
@@ -520,7 +525,7 @@ def export_methods_holdout_table(csv_path: Path, tex_path: Path) -> None:
     print(f"File saved to {tex_path}.")
 
 
-# Pretty row labels for the scheme table, matching the thesis tables.
+# Pretty row labels for the scheme table.
 scheme_train_labels = {
     "CheXpert": "CheXpert",
     "MIMIC-CXR": "MIMIC-CXR",
@@ -535,7 +540,7 @@ def export_scheme_table(
     caption: str,
     label: str,
 ) -> None:
-    """Export the per-train-dataset scheme table (Base./Independent/Picked/Average).
+    """Export the per-train-dataset scheme table (Base./Prior/Compliant/Aggregated).
 
     One row per encoder (training dataset) using its Holdout metric. The ``Base.``
     column shows the per-encoder ``Baseline`` value: when it is constant across
@@ -569,15 +574,15 @@ def export_scheme_table(
 
     # (method key, header label) for the scheme columns, in display order.
     scheme_methods = [
-        ("Independent", "Independent"),
-        ("Picked_1_Samples", "1"),
-        ("Picked_2_Samples", "2"),
-        ("Picked_5_Samples", "5"),
-        ("Picked_10_Samples", "10"),
-        ("Picked_20_Samples", "20"),
-        ("Picked_50_Samples", "50"),
-        ("Picked_100_Samples", "100"),
-        ("Average", "Average"),
+        ("Prior", "Prior"),
+        ("Compliant_1_Samples", "1"),
+        ("Compliant_2_Samples", "2"),
+        ("Compliant_5_Samples", "5"),
+        ("Compliant_10_Samples", "10"),
+        ("Compliant_20_Samples", "20"),
+        ("Compliant_50_Samples", "50"),
+        ("Compliant_100_Samples", "100"),
+        ("Aggregated", "Aggregated"),
     ]
 
     def format_cells(values: list[float | None]) -> list[str]:
@@ -608,7 +613,7 @@ def export_scheme_table(
         r"    \begin{tabular}{c|c|c|c|c|c|c|c|c|c}",
         r"    \toprule",
         r"    \multirow{2}{*}{\diagbox{Train}{Scheme}}"
-        r" & \multirow{2}{*}{Independent} & \multicolumn{7}{c|}{Picked (Samples)}"
+        r" & \multirow{2}{*}{Prior} & \multicolumn{7}{c|}{Compliant (Samples)}"
         r" & \multirow{2}{*}{Average} \\",
         r"    \cline{3-9}",
         r"    & & 1 & 2 & 5 & 10 & 20 & 50 & 100 & \\",
@@ -650,7 +655,7 @@ def export_scheme_table(
 # Scheme-plot line colors; linestyles keep the schemes distinguishable if the palette is unavailable.
 scheme_plot_colors = {
     "Prior": "#64C7EA",
-    "Aggregate": "#A6A0F5",
+    "Aggregated": "#A6A0F5",
     "Compliant": "#7BDA19",
     "Prevalence": "#000000",
     "NIQE": "#A6A0F5",
@@ -734,7 +739,7 @@ def export_scheme_plot(
     """Export the per-prior-dataset scheme figure (reference lines + picked-sample curve).
 
     One subplot per prior (encoder training) dataset, titled with its name. The
-    Independent (``Encoder Reference``) and average schemes are horizontal
+    Prior and Aggregated schemes are horizontal
     reference lines; the picked scheme is a curve of the Holdout metric over
     the number of picked compliant samples, with a band of ±1 standard
     deviation across the picking iterations.
@@ -783,11 +788,11 @@ def export_scheme_plot(
 
     # (legend label, method key, linestyle) for the horizontal reference lines.
     reference_lines = [
-        ("Prior", "Independent", "-"),
-        ("Aggregate", "Average", "-"),
+        ("Prior", "Prior", "-"),
+        ("Aggregated", "Aggregated", "-"),
     ]
 
-    apply_thesis_style()
+    apply_paper_style()
     fig, axes = plt.subplots(1, len(datasets), figsize=(9, 2), sharey=True)
 
     for ax, encoder in zip(axes, datasets, strict=True):
@@ -799,8 +804,8 @@ def export_scheme_plot(
         picked_points = [
             (
                 n_samples,
-                holdout_for(f"Picked_{n_samples}_Samples", encoder),
-                holdout_for(f"Picked_{n_samples}_Samples_std", encoder),
+                holdout_for(f"Compliant_{n_samples}_Samples", encoder),
+                holdout_for(f"Compliant_{n_samples}_Samples_std", encoder),
             )
             for n_samples in picked_samples
         ]
@@ -910,7 +915,7 @@ def export_scheme_auc_fpr_plot(
     """Export the per-prior-dataset reference-scheme figure combining AUC and FPR@95TPR.
 
     One subplot per prior (encoder training) dataset, titled with its name.
-    The Prior (``Independent``) and Aggregate (``Average``) reference schemes are
+    The Prior and Aggregated reference schemes are
     drawn as horizontal lines, and the Compliant (picked-sample) scheme is a
     curve over the number of picked compliant samples: AUC (%) on the left
     axis as solid lines, and FPR@95TPR (%) on the right axis as dashed lines.
@@ -938,11 +943,11 @@ def export_scheme_auc_fpr_plot(
 
     # (legend label, method key) for the horizontal reference lines.
     reference_lines = [
-        ("Prior", "Independent"),
-        ("Aggregate", "Average"),
+        ("Prior", "Prior"),
+        ("Aggregated", "Aggregated"),
     ]
 
-    apply_thesis_style()
+    apply_paper_style()
     fig, axes = plt.subplots(1, len(datasets), figsize=(9, 2.25), sharey=True)
     twin_axes = []
 
@@ -962,8 +967,8 @@ def export_scheme_auc_fpr_plot(
         auc_picked_points = [
             (
                 n_samples,
-                holdout_for(auc_df, f"Picked_{n_samples}_Samples", encoder),
-                holdout_for(auc_df, f"Picked_{n_samples}_Samples_std", encoder),
+                holdout_for(auc_df, f"Compliant_{n_samples}_Samples", encoder),
+                holdout_for(auc_df, f"Compliant_{n_samples}_Samples_std", encoder),
             )
             for n_samples in picked_samples
         ]
@@ -995,8 +1000,8 @@ def export_scheme_auc_fpr_plot(
         fpr_picked_points = [
             (
                 n_samples,
-                holdout_for(fpr_df, f"Picked_{n_samples}_Samples", encoder),
-                holdout_for(fpr_df, f"Picked_{n_samples}_Samples_std", encoder),
+                holdout_for(fpr_df, f"Compliant_{n_samples}_Samples", encoder),
+                holdout_for(fpr_df, f"Compliant_{n_samples}_Samples_std", encoder),
             )
             for n_samples in picked_samples
         ]
@@ -1093,8 +1098,8 @@ def export_scheme_auc_fpr_csv(
 ) -> None:
     """Export the combined AUC + FPR@95TPR table underlying :func:`export_scheme_auc_fpr_plot`.
 
-    One row per (encoder, scheme): the Independent/Average reference schemes and
-    each Picked_N_Samples scheme, with their Holdout AUC and FPR@95TPR (plus the
+    One row per (encoder, scheme): the Prior/Aggregated reference schemes and
+    each Compliant_N_Samples scheme, with their Holdout AUC and FPR@95TPR (plus the
     picked schemes' across-iteration standard deviation, where available).
     """
     auc_csv_path = Path(auc_csv_path)
@@ -1118,9 +1123,9 @@ def export_scheme_auc_fpr_csv(
         return float(row.iloc[-1]["Holdout"])
 
     schemes: list[tuple[str, str, int | None]] = [
-        ("Prior", "Independent", None),
-        ("Aggregate", "Average", None),
-        *[("Compliant", f"Picked_{n_samples}_Samples", n_samples) for n_samples in picked_samples],
+        ("Prior", "Prior", None),
+        ("Aggregated", "Aggregated", None),
+        *[("Compliant", f"Compliant_{n_samples}_Samples", n_samples) for n_samples in picked_samples],
     ]
 
     rows = [
@@ -1169,7 +1174,7 @@ def main():
         fpr_csv_path = results_root / f"{subset}_FPR95s.csv"
         mahala_scores_csv_path = results_root / f"{subset}_MahalaScores.csv"
         chi_scores_csv_path = results_root / f"{subset}_ChiScores.csv"
-        independent_tex_output_path = results_root / f"{subset}_auc_independent.tex"
+        prior_tex_output_path = results_root / f"{subset}_auc_prior.tex"
         methods_tex_output_path = results_root / f"{subset}_auc_methods.tex"
         scheme_auc_tex_output_path = results_root / f"{subset}_scheme_auc.tex"
         scheme_ap_tex_output_path = results_root / f"{subset}_scheme_ap.tex"
@@ -1201,7 +1206,7 @@ def main():
                     client_labels[client]["image_path"] = client_labels[client]["image_path"].astype(str)
 
                     # get features
-                    feat_file = workspace_root / "Assets" / "Features" / subset / f"{client}_using_{encoder}.npz"
+                    feat_file = get_results_root() / "features" / subset / f"{client}_using_{encoder}.npz"
                     feats = np.load(feat_file, allow_pickle=True)["arr_0"]
                     feats[:, 1:] = feats[:, 1:].astype(np.float32)
 
@@ -1221,16 +1226,16 @@ def main():
                     client_feats[client] = feats[aligned_indices]
 
                 """
-                INDEPENDENT
+                PRIOR
                 -------------------------------------------------
-                Reference vector is independent of clients data.
+                Reference vector is the client-agnostic prior (theta_G = theta_E).
                 """
-                for method in ["Independent"]:
+                for method in ["Prior"]:
                     method_name = method
                     print(f"Method: {method_name.replace('_', ' ')}")
 
                     reference_feat_file = (
-                        workspace_root / "Assets" / "Features" / subset / f"{encoder}_using_{encoder}.npz"
+                        get_results_root() / "features" / subset / f"{encoder}_using_{encoder}.npz"
                     )
                     reference_feats = np.load(reference_feat_file, allow_pickle=True)["arr_0"]
                     reference_feats[:, 1:] = reference_feats[:, 1:].astype(np.float32)
@@ -1276,9 +1281,10 @@ def main():
                     )
 
                 """
-                AVERAGE
+                AGGREGATED
                 -------------------------------------------------
-                Reference vector is the average of clients data.
+                Reference vector is aggregated from client-level feature statistics
+                via the law of total covariance (Eq. 2).
                 """
                 client_stats = []
                 for client, feats in client_feats.items():
@@ -1289,7 +1295,7 @@ def main():
                 size_values = np.array([n_i for _, _, _, n_i in client_stats], dtype=np.float64)
                 weights = size_values / size_values.sum()
 
-                method_name = "Average"
+                method_name = "Aggregated"
                 print(f"Method: {method_name}")
 
                 means = np.array([mu for _, mu, _, _ in client_stats])
@@ -1343,11 +1349,12 @@ def main():
                 )
 
                 """
-                PICKED
+                COMPLIANT
                 -------------------------------------------------
-                Reference vector relies on the client picking compliant samples.
+                Reference vector relies on the client picking M compliant samples
+                (simulated clinician curation, Sec. 5).
                 """
-                method = "Picked"
+                method = "Compliant"
                 for n_samples in picked_samples:
                     method_name = f"{method}_{n_samples}_Samples"
                     print(f"Method: {method_name.replace('_', ' ')}")
@@ -1443,7 +1450,7 @@ def main():
                     )
 
         if run_report:
-            export_independent_auc_table(csv_path=csv_path, tex_path=independent_tex_output_path)
+            export_prior_auc_table(csv_path=csv_path, tex_path=prior_tex_output_path)
             export_methods_holdout_table(csv_path=csv_path, tex_path=methods_tex_output_path)
             export_scheme_table(
                 csv_path=csv_path,

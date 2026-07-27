@@ -1,4 +1,4 @@
-"""End-to-end quickstart for the DeCaF compliance dataset.
+"""End-to-end quickstart for the DeMICAF compliance dataset.
 
 Loads the bundled annotations, builds a :class:`DatasetCXR` over locally-available
 source images, extracts CAF encoder features, scores each image with the Mahalanobis
@@ -20,7 +20,6 @@ Run::
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 import numpy as np
@@ -32,10 +31,9 @@ from DeMICAF.caf.networks import ResNet2D
 from DeMICAF.caf.scorer import mahalanobis
 from DeMICAF.data.datasets import DatasetCXR
 from DeMICAF.evaluation.auc import compute_auc
-from DeMICAF.utils.paths import get_repo_root
+from DeMICAF.utils.paths import get_annotations_root, get_cxr_root
 
-REPO_ROOT = get_repo_root()
-ANNOTATIONS_CSV = REPO_ROOT / "data" / "annotations" / "annotated_causes.csv"
+ANNOTATIONS_CSV = get_annotations_root() / "annotated_causes.csv"
 
 
 def _strip_dataset_prefix(image_path: str) -> str:
@@ -60,11 +58,11 @@ def extract_features(dataset: DatasetCXR, encoder: torch.nn.Module, batch_size: 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="DeCaF compliance-scoring quickstart.")
+    parser = argparse.ArgumentParser(description="DeMICAF compliance-scoring quickstart.")
     parser.add_argument(
         "--cxr-root",
         type=Path,
-        default=Path(os.environ.get("CXR_ROOT", "data/chest_xray")),
+        default=get_cxr_root(),
         help="Root containing one subfolder per source dataset.",
     )
     parser.add_argument("--checkpoint", type=Path, default=None, help="Optional CAF encoder checkpoint (.pt).")

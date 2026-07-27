@@ -1,6 +1,6 @@
 """Compute no-reference perceptual IQA baselines (BRISQUE, NIQE) over the annotated samples.
 
-For each image in ``data/annotations/annotated_causes.csv`` the script computes blind
+For each image in ``annotations/annotated_causes.csv`` the script computes blind
 image quality metrics and records them alongside the ground-truth compliance label.
 
 One output CSV is produced per run, written incrementally (every 50 rows) so that
@@ -36,7 +36,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 from tqdm import tqdm
 
 from DeMICAF.data.datasets import KNOWN_DATASETS
-from DeMICAF.utils.paths import get_repo_root, resolve_path
+from DeMICAF.utils.paths import get_annotations_root, get_cxr_root, get_results_root, resolve_path
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -52,24 +52,23 @@ COMPLIANCE_MAP = {
 
 def parse_args() -> argparse.Namespace:
     """Define and parse command-line arguments."""
-    repo_root = get_repo_root()
     parser = argparse.ArgumentParser(description="Compute perceptual IQA baselines over the annotated samples.")
     parser.add_argument(
         "--annotations",
         type=Path,
-        default=repo_root / "data" / "annotations" / "annotated_causes.csv",
+        default=get_annotations_root() / "annotated_causes.csv",
         help="Compliance annotation CSV with image_path and compliance columns.",
     )
     parser.add_argument(
         "--data-root",
         type=str,
-        default="/eos/user/h/hpestana/CXR",
+        default=str(get_cxr_root()),
         help="Root directory containing one image sub-folder per dataset (absolute or relative to the repo root).",
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=repo_root / "Results" / "Baseline",
+        default=get_results_root() / "baseline",
         help="Directory in which to save the result CSV.",
     )
     parser.add_argument(

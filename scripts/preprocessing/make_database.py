@@ -1,7 +1,7 @@
 """Build the SQLite annotation database from the raw per-annotator CSV exports.
 
 This is the (anonymized) script used to assemble the compliance-annotation database
-from which ``data/annotations/annotated_causes.csv`` is exported. It is included for
+from which ``annotations/annotated_causes.csv`` is exported. It is included for
 provenance and reproducibility.
 
 The raw per-annotator CSVs (one per dataset, each row = ``image_path, compliance``)
@@ -35,7 +35,7 @@ DATASETS = ["CheXpert", "PadChest", "ChestX-ray8", "MIMIC-CXR"]
 
 COMPLIANCY_STATES = ["Compliant", "Non-Compliant", "Doubt"]
 
-#: The non-compliance taxonomy (also mirrored in ``data/annotations/taxonomy.json``).
+#: The non-compliance taxonomy (also mirrored in ``annotations/taxonomy.json``).
 CAUSES: list[tuple[str, str]] = [
     (
         "Corrupted Images",
@@ -59,8 +59,7 @@ CAUSES: list[tuple[str, str]] = [
     ),
     (
         # NOTE: Split out of "Image Quality Problems" as a dedicated category given its
-        # high recurrence. TODO(author): confirm the exact clinical wording of this
-        # definition before public release.
+        # high recurrence.
         "Area Not Valid",
         "Images where less than approximately 80% of the frame is valid thoracic content, "
         "with the invalid area typically caused by collimation problems, cropping, or "

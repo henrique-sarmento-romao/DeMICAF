@@ -1,4 +1,4 @@
-"""Matplotlib helpers shared by the result-generation scripts and notebooks."""
+"""Matplotlib helpers shared by the result-generation scripts."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from matplotlib.ticker import FuncFormatter
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
-#: Default figure size used by the thesis figures.
+#: Default figure size used across the paper's figures.
 FIG_SIZE = (4, 3)
 
 
-def apply_thesis_style() -> None:
-    """Apply the serif font setup used by every thesis figure."""
+def apply_paper_style() -> None:
+    """Apply the serif font setup used by every paper figure."""
     plt.rcParams["font.family"] = "serif"
     plt.rcParams["font.serif"] = ["Times New Roman", "Times", "Nimbus Roman", "DejaVu Serif"]
 

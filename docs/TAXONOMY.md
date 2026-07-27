@@ -3,7 +3,7 @@
 A chest radiograph is **compliant** when it is a technically valid, standard-protocol
 frontal thorax image fit for downstream analysis. Otherwise it is **non-compliant**,
 annotated with one or more of the seven causes below. The machine-readable version of
-this taxonomy is [`../data/annotations/taxonomy.json`](../data/annotations/taxonomy.json);
+this taxonomy is [`../annotations/taxonomy.json`](../annotations/taxonomy.json);
 the CSV column id for each cause is given in parentheses.
 
 | # | Cause (`column_id`) | Definition |
@@ -23,8 +23,6 @@ column (`1` = present).
 
 - **Area Not Valid** was introduced after the initial protocol (previously subsumed
   under *Image Quality Problems*) as a dedicated category, given its high recurrence.
-  > **TODO (author):** confirm the exact clinical wording of the *Area Not Valid*
-  > definition before public release; the text above is a working formulation.
 - During labelling a third *doubt* state was available for ambiguous cases; these were
   adjudicated to *compliant* / *non-compliant* before release, so the distributed
   annotations contain only the two final states.
