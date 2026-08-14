@@ -17,21 +17,22 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.transforms import Bbox
 from matplotlib.ticker import MaxNLocator, ScalarFormatter
+from matplotlib.transforms import Bbox
 from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 
 from DeMICAF.caf.scorer import mahalanobis_distance, reference_vector
 from DeMICAF.utils.io import upsert_scores_csv as _upsert_scores_csv
-from DeMICAF.utils.paths import get_cxr_root, get_results_root
+from DeMICAF.utils.paths import get_results_root
 from DeMICAF.utils.plotting import apply_paper_style
 
 datasets = ["CheXpert", "MIMIC-CXR", "ChestX-ray8", "PadChest"]
 picked_samples = [1, 2, 5, 10, 20, 50, 100]
 n_iter = 10
+SAMPLE_N = 1000
 
 results_root = get_results_root() / "reference_schemes"
-data_root = get_cxr_root()
+data_root = Path("/eos/user/h/hpestana/CXR")
 niqe_baseline_csv_path = get_results_root() / "baseline" / "perceptual_iqa_metrics.csv"
 
 
@@ -218,6 +219,41 @@ def compute_and_store_scores(
     return scores_by_client
 
 
+def compute_and_store_scores_per_client(
+    ref_vectors_by_client: dict[str, list[np.ndarray]],
+    ref_covmats_by_client: dict[str, list[np.ndarray]],
+    client_feats: dict[str, np.ndarray],
+    tag: str,
+    chi: bool,
+    scores_output_csv_path: Path,
+) -> dict[str, pd.DataFrame]:
+    """Like :func:`compute_and_store_scores`, but each client scores against its own reference."""
+    scores_by_client: dict[str, pd.DataFrame] = {}
+
+    for client, feats in client_feats.items():
+        feat_names = feats[:, 0].astype(str)
+        feats_values = feats[:, 1:].astype(np.float32)
+        scores = mahalanobis_distance(
+            feats_values, ref_vectors_by_client[client], ref_covmats_by_client[client], chi=chi
+        )
+
+        upsert_scores_csv(
+            csv_path=scores_output_csv_path,
+            image_names=feat_names,
+            scores=np.asarray(scores),
+            tag=tag,
+        )
+
+        scores_by_client[client] = pd.DataFrame(
+            {
+                "image_path": feat_names,
+                "score": np.asarray(scores, dtype=np.float64),
+            }
+        )
+
+    return scores_by_client
+
+
 def compute_client_metrics(
     scores_by_client: dict[str, pd.DataFrame],
     client_labels: dict[str, pd.DataFrame],
@@ -365,6 +401,7 @@ def save_metrics(
 
     method_order = [
         "Prior",
+        "Local",
         "Aggregated",
         "Compliant_1_Samples",
         "Compliant_3_Samples",
@@ -489,11 +526,9 @@ def export_methods_holdout_table(csv_path: Path, tex_path: Path) -> None:
         r"        Client Relation & Parameters & CheXpert & ChestX-ray8 & MIMIC-CXR & PadChest \\",
         r"        \hline",
         r"        \hline",
-        "        "
-        + "\\multicolumn{2}{c|}{Prior} & "
-        + " & ".join(encoder_values("Prior"))
-        + " "
-        + chr(92) * 2,
+        "        " + "\\multicolumn{2}{c|}{Prior} & " + " & ".join(encoder_values("Prior")) + " " + chr(92) * 2,
+        r"        \hline",
+        "        " + "\\multicolumn{2}{c|}{Local} & " + " & ".join(encoder_values("Local")) + " " + chr(92) * 2,
         r"        \hline",
         "        "
         + "\\multicolumn{2}{c|}{Aggregated} & "
@@ -575,6 +610,7 @@ def export_scheme_table(
     # (method key, header label) for the scheme columns, in display order.
     scheme_methods = [
         ("Prior", "Prior"),
+        ("Local", "Local"),
         ("Compliant_1_Samples", "1"),
         ("Compliant_2_Samples", "2"),
         ("Compliant_5_Samples", "5"),
@@ -610,13 +646,13 @@ def export_scheme_table(
         r"    \centering",
         rf"    \caption{{{caption}}}",
         rf"    \label{{{label}}}",
-        r"    \begin{tabular}{c|c|c|c|c|c|c|c|c|c}",
+        r"    \begin{tabular}{c|c|c|c|c|c|c|c|c|c|c}",
         r"    \toprule",
         r"    \multirow{2}{*}{\diagbox{Train}{Scheme}}"
-        r" & \multirow{2}{*}{Prior} & \multicolumn{7}{c|}{Compliant (Samples)}"
+        r" & \multirow{2}{*}{Prior} & \multirow{2}{*}{Local} & \multicolumn{7}{c|}{Compliant (Samples)}"
         r" & \multirow{2}{*}{Average} \\",
-        r"    \cline{3-9}",
-        r"    & & 1 & 2 & 5 & 10 & 20 & 50 & 100 & \\",
+        r"    \cline{4-10}",
+        r"    & & & 1 & 2 & 5 & 10 & 20 & 50 & 100 & \\",
         r"    \midrule",
     ]
 
@@ -655,7 +691,8 @@ def export_scheme_table(
 # Scheme-plot line colors; linestyles keep the schemes distinguishable if the palette is unavailable.
 scheme_plot_colors = {
     "Prior": "#64C7EA",
-    "Aggregated": "#A6A0F5",
+    "Aggregated": "#0033A0",
+    "Local": "#A6A0F5",
     "Compliant": "#7BDA19",
     "Prevalence": "#000000",
     "NIQE": "#A6A0F5",
@@ -789,6 +826,7 @@ def export_scheme_plot(
     # (legend label, method key, linestyle) for the horizontal reference lines.
     reference_lines = [
         ("Prior", "Prior", "-"),
+        ("Local", "Local", "-"),
         ("Aggregated", "Aggregated", "-"),
     ]
 
@@ -854,7 +892,7 @@ def export_scheme_plot(
                     label="Prevalence",
                 )
 
-        ax.set_title(scheme_train_labels.get(encoder, encoder),fontsize=plt.rcParams["axes.labelsize"])
+        ax.set_title(scheme_train_labels.get(encoder, encoder), fontsize=plt.rcParams["axes.labelsize"])
         ax.set_xscale("log")
         ax.set_xticks(picked_samples)
         ax.xaxis.set_major_formatter(ScalarFormatter())
@@ -901,7 +939,7 @@ def export_scheme_plot(
             title=title,
         )
     fig.tight_layout(rect=(-0.01, 0.01, 0.97, 1))
-    suptitle = fig.suptitle("Prior Dataset", y=1.04)#, fontsize=plt.rcParams["axes.labelsize"])
+    suptitle = fig.suptitle("Prior Dataset", y=1.04)  # , fontsize=plt.rcParams["axes.labelsize"])
 
     _export_split_panels(fig, axes, plot_path, legend_artists=[*fig.legends, suptitle])
     plt.close(fig)
@@ -944,6 +982,7 @@ def export_scheme_auc_fpr_plot(
     # (legend label, method key) for the horizontal reference lines.
     reference_lines = [
         ("Prior", "Prior"),
+        ("Local", "Local"),
         ("Aggregated", "Aggregated"),
     ]
 
@@ -1038,7 +1077,7 @@ def export_scheme_auc_fpr_plot(
         # ax.set_xlabel(r"$M$")
         ax.xaxis.set_major_formatter(ScalarFormatter())
         ax.minorticks_off()
-        ax.set_ylim(bottom=50,top=90)
+        ax.set_ylim(bottom=50, top=90)
         ax2.set_ylim(top=100)
         ax.yaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=5))
         ax2.yaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=5))
@@ -1070,7 +1109,7 @@ def export_scheme_auc_fpr_plot(
         scheme_handles,
         scheme_labels,
         loc="upper center",
-        bbox_to_anchor=(0.36, 0.0),
+        bbox_to_anchor=(0.34, 0.0),
         ncol=len(scheme_handles),
         frameon=True,
         title="Reference Scheme",
@@ -1079,7 +1118,7 @@ def export_scheme_auc_fpr_plot(
         style_handles,
         style_labels,
         loc="upper center",
-        bbox_to_anchor=(0.70, 0.0),
+        bbox_to_anchor=(0.72, 0.0),
         ncol=len(style_handles),
         frameon=True,
         title="Metric",
@@ -1124,6 +1163,7 @@ def export_scheme_auc_fpr_csv(
 
     schemes: list[tuple[str, str, int | None]] = [
         ("Prior", "Prior", None),
+        ("Local", "Local", None),
         ("Aggregated", "Aggregated", None),
         *[("Compliant", f"Compliant_{n_samples}_Samples", n_samples) for n_samples in picked_samples],
     ]
@@ -1178,9 +1218,6 @@ def main():
         methods_tex_output_path = results_root / f"{subset}_auc_methods.tex"
         scheme_auc_tex_output_path = results_root / f"{subset}_scheme_auc.tex"
         scheme_ap_tex_output_path = results_root / f"{subset}_scheme_ap.tex"
-        scheme_auc_plot_output_path = results_root / "demicaf_auc.pdf"
-        scheme_ap_plot_output_path = results_root / "demicaf_ap.pdf"
-        scheme_fpr_plot_output_path = results_root / "demicaf_fpr.pdf"
         scheme_auc_fpr_plot_output_path = results_root / "demicaf_auc_fpr.pdf"
         scheme_auc_fpr_csv_output_path = results_root / f"{subset}_scheme_auc_fpr.csv"
 
@@ -1234,13 +1271,12 @@ def main():
                     method_name = method
                     print(f"Method: {method_name.replace('_', ' ')}")
 
-                    reference_feat_file = (
-                        get_results_root() / "features" / subset / f"{encoder}_using_{encoder}.npz"
-                    )
+                    reference_feat_file = get_results_root() / "features" / subset / f"{encoder}_using_{encoder}.npz"
                     reference_feats = np.load(reference_feat_file, allow_pickle=True)["arr_0"]
                     reference_feats[:, 1:] = reference_feats[:, 1:].astype(np.float32)
+                    fixed_feats = reference_feats[np.random.choice(reference_feats.shape[0], SAMPLE_N, replace=False)]
 
-                    ref_vector, ref_covmat = reference_vector(reference_feats[:, 1:].astype(np.float32))
+                    ref_vector, ref_covmat = reference_vector(fixed_feats)
                     ref_vectors, ref_covmats = [ref_vector], [ref_covmat]
 
                     independent_scores = compute_and_store_scores(
@@ -1279,6 +1315,62 @@ def main():
                         values=independent_fprs,
                         baseline=95.0,
                     )
+
+                """
+                LOCAL
+                -------------------------------------------------
+                Each client scores against its own reference, built from its own
+                full set of compliant-labeled samples (no cross-client pooling).
+                AUC/AP/FPR are still computed on the pooled (Holdout) scores.
+                """
+                method_name = "Local"
+                print(f"Method: {method_name}")
+
+                local_ref_vectors: dict[str, list[np.ndarray]] = {}
+                local_ref_covmats: dict[str, list[np.ndarray]] = {}
+                for client, feats in client_feats.items():
+                    local_feats = feats
+                    fixed_feats = local_feats[np.random.choice(local_feats.shape[0], SAMPLE_N, replace=False)]
+                    ref_vector, ref_covmat = reference_vector(fixed_feats)
+                    local_ref_vectors[client] = [ref_vector]
+                    local_ref_covmats[client] = [ref_covmat]
+
+                local_scores = compute_and_store_scores_per_client(
+                    local_ref_vectors,
+                    local_ref_covmats,
+                    client_feats,
+                    tag=f"{encoder}_{method_name}_mahala",
+                    chi=False,
+                    scores_output_csv_path=mahala_scores_csv_path,
+                )
+                compute_and_store_scores_per_client(
+                    local_ref_vectors,
+                    local_ref_covmats,
+                    client_feats,
+                    tag=f"{encoder}_{method_name}_chi",
+                    chi=True,
+                    scores_output_csv_path=chi_scores_csv_path,
+                )
+                local_aucs, local_aps, local_fprs, local_baseline = compute_client_metrics(
+                    scores_by_client=local_scores,
+                    client_labels=client_labels,
+                    encoder=encoder,
+                )
+                save_metrics(csv_path=csv_path, method_name=method_name, encoder=encoder, values=local_aucs)
+                save_metrics(
+                    csv_path=ap_csv_path,
+                    method_name=method_name,
+                    encoder=encoder,
+                    values=local_aps,
+                    baseline=local_baseline,
+                )
+                save_metrics(
+                    csv_path=fpr_csv_path,
+                    method_name=method_name,
+                    encoder=encoder,
+                    values=local_fprs,
+                    baseline=95.0,
+                )
 
                 """
                 AGGREGATED
