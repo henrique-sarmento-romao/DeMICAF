@@ -129,11 +129,17 @@ class Split:
     test_df: pd.DataFrame  # every client image, compliant + non-compliant
 
 
+def _bank_key(client: str, image_path: str) -> str:
+    """Feature-bank lookup key: the precomputed ``.npz`` banks store names as ``{dataset}/{image_path}``."""
+    return f"{client}/{image_path}"
+
+
 def build_split(df: pd.DataFrame, seed: int) -> Split:
     """Build the reference bank (every compliant image per client) and evaluation pool (every image)."""
     compliant = df[df["compliant"]]
     reference_ids = {
-        client: group["image_path"].to_numpy(dtype=str) for client, group in compliant.groupby("dataset", sort=False)
+        client: np.asarray([_bank_key(client, p) for p in group["image_path"]], dtype=str)
+        for client, group in compliant.groupby("dataset", sort=False)
     }
     return Split(seed=seed, reference_ids=reference_ids, test_df=df)
 
@@ -243,7 +249,8 @@ def score_md(
     scores: dict[str, float] = {}
     for client, group in test_df.groupby("dataset", sort=False):
         ids = group["image_path"].to_numpy(dtype=str)
-        points = _select_features(client_feats[client], ids)
+        bank_ids = np.asarray([_bank_key(client, i) for i in ids], dtype=str)
+        points = _select_features(client_feats[client], bank_ids)
         md = mahalanobis_distance(points, [mean], [cov])
         scores.update(dict(zip(ids, md, strict=True)))
     return scores
@@ -274,11 +281,12 @@ def score_knn(
     scores: dict[str, float] = {}
     for client, group in split.test_df.groupby("dataset", sort=False):
         ids = group["image_path"].to_numpy(dtype=str)
-        points = _select_features(client_feats[client], ids)
+        bank_ids = np.asarray([_bank_key(client, i) for i in ids], dtype=str)
+        points = _select_features(client_feats[client], bank_ids)
         distances, indices = nn_model.kneighbors(points)
 
-        for image_id, row_distances, row_indices in zip(ids, distances, indices, strict=True):
-            position = self_position.get(image_id)
+        for image_id, bank_id, row_distances, row_indices in zip(ids, bank_ids, distances, indices, strict=True):
+            position = self_position.get(bank_id)
             if position is not None:
                 row_distances = row_distances[row_indices != position]
             scores[image_id] = row_distances[k - 1]
@@ -332,7 +340,7 @@ def compute_iqa(
             image_path = str(row["image_path"])
             full_path = Path(image_path)
             if not full_path.is_absolute():
-                full_path = data_root / full_path
+                full_path = data_root / str(row["dataset"]) / full_path
 
             image = load_image(full_path)
             score = _safe_metric(metric_fn, image_to_tensor(image)) if image is not None else None
@@ -362,8 +370,9 @@ class _SelfCleanImageDataset(TorchDataset):
     ``torchvision.datasets.ImageFolder``.
     """
 
-    def __init__(self, paths: list[str], data_root: Path) -> None:
+    def __init__(self, paths: list[str], datasets: list[str], data_root: Path) -> None:
         self.samples = [(path, 0) for path in paths]
+        self.datasets = datasets
         self.data_root = data_root
         self.transform = None
 
@@ -374,7 +383,7 @@ class _SelfCleanImageDataset(TorchDataset):
         path, label = self.samples[index]
         full_path = Path(path)
         if not full_path.is_absolute():
-            full_path = self.data_root / full_path
+            full_path = self.data_root / self.datasets[index] / full_path
         image = load_image(full_path)
         if self.transform is not None:
             image = self.transform(image)
@@ -402,7 +411,8 @@ def compute_selfclean(df: pd.DataFrame, data_root: Path, cache_path: Path, *, re
     from selfclean.cleaner.selfclean import PretrainingType, SelfClean
 
     paths = df["image_path"].tolist()
-    dataset = _SelfCleanImageDataset(paths, data_root)
+    datasets = df["dataset"].astype(str).tolist()
+    dataset = _SelfCleanImageDataset(paths, datasets, data_root)
 
     cleaner = SelfClean(plot_distribution=False)
     issues = cleaner.run_on_dataset(
@@ -638,6 +648,11 @@ def _fmt_pct(value: float | None) -> str:
     return "--" if value is None or np.isnan(value) else f"{value * 100:04.1f}"
 
 
+def _fmt_prevalence_pct(value: float | None) -> str:
+    r"""Format prevalence as a bare percentage with 2 decimals, no zero-padding (e.g. rare causes like 0.03)."""
+    return "--" if value is None or np.isnan(value) else f"{value * 100:.2f}"
+
+
 def _format_ranked_cell(value: float | None, best: float | None, second_best: float | None) -> str:
     """Bold the row's best value, underline its second-best (a distinct, strictly lower value)."""
     cell = _fmt_pct(value)
@@ -672,7 +687,7 @@ def export_ap_latex_table(results: pd.DataFrame, tex_path: Path) -> None:
         present = sorted({v for v in values.values() if v is not None}, reverse=True)
         best = present[0] if present else None
         second_best = present[1] if len(present) > 1 else None
-        prev_cell = _fmt_pct(prevalence.get(cause_key))
+        prev_cell = _fmt_prevalence_pct(prevalence.get(cause_key))
         cells = [_format_ranked_cell(values[m], best, second_best) for _, m in LATEX_BASELINE_COLUMNS]
         ours_cell = _format_ranked_cell(values[LATEX_OURS_METHOD], best, second_best)
         return f"    {label} & {prev_cell} & " + " & ".join(cells) + f" & {ours_cell} \\\\"

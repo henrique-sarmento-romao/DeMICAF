@@ -107,7 +107,6 @@ def load_annotations(path: Path, limit: int | None, seed: int) -> pd.DataFrame:
     the convention used throughout the released annotation tables.
     """
     df = pd.read_csv(path)
-    df["dataset"] = df["image_path"].astype(str).str.split("/", n=1).str[0]
     df = df[df["dataset"].isin(KNOWN_DATASETS)]
     if limit is not None:
         sampled = [g.sample(n=min(limit, len(g)), random_state=seed) for _, g in df.groupby("dataset", sort=False)]
@@ -276,7 +275,7 @@ def compute_scores(args: argparse.Namespace, output_path: Path) -> None:
 
             full_path = Path(image_path)
             if not full_path.is_absolute():
-                full_path = data_root / full_path
+                full_path = data_root / dataset / full_path
 
             image = load_image(full_path)
             compliance = str(row.get("compliance", "")).strip()
