@@ -12,10 +12,14 @@ features — see ``scripts/extract_classifier_features.py``) and ``selfclean``
 (pretrained-ViT off-topic-sample score, no self-supervised training). ``demicaf_prior``
 and ``gen`` (P2) are not implemented — not needed for the target table.
 
-Reference/eval pool: every compliant image of the three client datasets (CheXpert is
-the excluded prior) is used both to fit the reference statistics (Mahalanobis
-mean/covariance, KNN reference bank) and as part of the scored evaluation pool, along
-with every non-compliant image — no held-out split. This is safe for the
+Reference/eval pool: every image of the three client datasets (CheXpert is the
+excluded prior) — compliant and non-compliant alike — is used both to fit the
+reference statistics (Mahalanobis mean/covariance, KNN reference bank) and as part of
+the scored evaluation pool, with no held-out split. This is deliberate: none of these
+methods are allowed to use the compliance label to pick their reference set (that would
+be the "Compliant" reference scheme, a separate, explicitly-labelled baseline this
+script does not implement) — they must operate on every image, label-free, since a real
+federated client has no compliance annotations to filter by. This is safe for the
 summary-statistic scorers (a single point's influence on a mean/covariance is minor),
 but ``score_knn`` does literal nearest-neighbour lookup, so it explicitly excludes each
 query's own reference-bank entry to avoid trivial zero-distance self-matches.
@@ -122,10 +126,10 @@ def load_annotations(annotations_path: Path) -> pd.DataFrame:
 
 @dataclass
 class Split:
-    """Reference bank (all compliant images) and the full evaluation pool, for one seed's bootstrap draws."""
+    """Reference bank (every image, label-free) and the full evaluation pool, for one seed's bootstrap draws."""
 
     seed: int
-    reference_ids: dict[str, np.ndarray]  # client -> all compliant image_paths
+    reference_ids: dict[str, np.ndarray]  # client -> every image_path, compliant or not
     test_df: pd.DataFrame  # every client image, compliant + non-compliant
 
 
@@ -135,11 +139,18 @@ def _bank_key(client: str, image_path: str) -> str:
 
 
 def build_split(df: pd.DataFrame, seed: int) -> Split:
-    """Build the reference bank (every compliant image per client) and evaluation pool (every image)."""
-    compliant = df[df["compliant"]]
+    """Build the reference bank and evaluation pool from every image per client — no compliance filter.
+
+    The reference/fit set must never be selected using the compliance label: every
+    method here (``demicaf_aggfull``, ``deepclean_central``, ``maha_pp``, ``knn``) is
+    meant to operate the way a real federated client would, with no compliance
+    annotations to filter by. Restricting the reference to known-compliant images is a
+    distinct, explicitly-labelled baseline ("Compliant" reference scheme) that this
+    script does not implement.
+    """
     reference_ids = {
         client: np.asarray([_bank_key(client, p) for p in group["image_path"]], dtype=str)
-        for client, group in compliant.groupby("dataset", sort=False)
+        for client, group in df.groupby("dataset", sort=False)
     }
     return Split(seed=seed, reference_ids=reference_ids, test_df=df)
 
@@ -201,8 +212,7 @@ def fit_aggfull_reference(
     """Agg-Full reference: per-client Gaussians fused by size-weighted mean/covariance.
 
     Matches the federated aggregation formula used by ``scripts/scoring/score.py``'s
-    ``"Average"`` method, but fit on this seed's reference split rather than the full
-    client data.
+    ``"Average"`` method, fit on every client image (label-free — see ``build_split``).
     """
     means, covs, sizes = [], [], []
     for client in CLIENTS:
@@ -267,11 +277,11 @@ def score_knn(
     both the reference bank and the test points need to be on the unit hypersphere
     for this to match the Sun et al. 2022 KNN-OOD formulation.
 
-    The reference bank is every compliant image, and every compliant image is also
-    scored (see ``build_split``), so a compliant query's own entry would otherwise be
-    its nearest neighbour at distance 0. Each query fetches ``k + 1`` neighbours and
-    drops its own reference-bank entry (matched by image id, not by distance) before
-    taking the k-th of what remains.
+    The reference bank is every image, compliant or not (see ``build_split``), and
+    every image is also scored, so a query's own entry would otherwise be its nearest
+    neighbour at distance 0. Each query fetches ``k + 1`` neighbours and drops its own
+    reference-bank entry (matched by image id, not by distance) before taking the k-th
+    of what remains.
     """
     pooled_ref = _pooled_reference_features(split, client_feats)
     pooled_ref_ids = np.concatenate([split.reference_ids[client] for client in CLIENTS])
