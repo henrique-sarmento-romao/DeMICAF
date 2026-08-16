@@ -79,12 +79,18 @@ def load_model_with_hook(
 
 
 def build_loader(df: pd.DataFrame, data_root: Path, *, batch_size: int, num_workers: int) -> DataLoader:
-    """Wrap ``df`` in a DatasetCXR using the classifier's own eval-time transform."""
+    """Wrap ``df`` in a DatasetCXR using the classifier's own eval-time transform.
+
+    ``image_path`` has no dataset prefix (``dataset`` is its own CSV column), but files
+    on disk live under ``{data_root}/{dataset}/{image_path}`` — so a ``path_builder`` is
+    required, or ``DatasetCXR`` silently drops every row as nonexistent.
+    """
     dataset = DatasetCXR(
         root_dir=data_root,
         dataframe=df,
         transform=val_tfm,
         image_column="image_path",
+        path_builder=lambda row: f"{row['dataset']}/{row['image_path']}",
         output_mode="label",
     )
     return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
@@ -156,7 +162,6 @@ def main() -> None:
     model, captured = load_model_with_hook(args.checkpoint, args.architecture, args.dropout_rate, args.device)
 
     annotations = pd.read_csv(args.annotations)
-    annotations["dataset"] = annotations["image_path"].astype(str).str.split("/", n=1).str[0]
 
     for client in CLIENTS:
         df = annotations[annotations["dataset"] == client]
