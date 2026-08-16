@@ -19,11 +19,13 @@ Uses :class:`DeMICAF.data.datasets.DatasetCXR` with ``DeMICAF.classifier.val_tfm
 validation/test evaluation while training — so the extracted outputs are
 consistent with what the model was actually trained/evaluated on.
 
+Uses the FedAvg classifier's checkpoint by default (see ``DEFAULT_CHECKPOINT`` below)
+— pass ``--checkpoint`` to point at a different one.
+
 Typical usage::
 
-    uv run python -m scripts.extract_classifier_features \
-        --checkpoint results/per_cause/classifier/fedavg_resnet18/seed_0/final_model.pt
-    uv run python -m scripts.extract_classifier_features --checkpoint ... --limit 20  # smoke test
+    uv run python -m scripts.extract_classifier_features
+    uv run python -m scripts.extract_classifier_features --limit 20  # smoke test
 """
 
 from __future__ import annotations
@@ -44,6 +46,12 @@ from DeMICAF.utils.paths import get_annotations_root, get_cxr_root, get_results_
 
 CLIENTS = ["ChestX-ray8", "MIMIC-CXR", "PadChest"]
 LABEL_COLS = ["Cardiomegaly", "Atelectasis", "Nodule", "Alveolar Pattern", "Pleural Effusion", "Pneumothorax"]
+
+#: The `knn`/`maha_pp`/`gen` scorers are defined against the FedAvg classifier, not a
+#: centralised one — matches `scripts/federated/train.py`'s own `--out-dir`/
+#: `--experiment-name` defaults, which is what actually produces this file (see
+#: `FLServer.run_federated`'s `final_model.pt` checkpoint in `DeMICAF.federated.server`).
+DEFAULT_CHECKPOINT = get_results_root() / "per_cause" / "classifier" / "fedavg_resnet18" / "seed_0" / "final_model.pt"
 
 
 def load_model_with_hook(
@@ -136,7 +144,12 @@ def parse_args() -> argparse.Namespace:
         default=get_annotations_root() / "annotated_causes.csv",
     )
     parser.add_argument("--data-root", type=str, default=str(get_cxr_root()))
-    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=DEFAULT_CHECKPOINT,
+        help="Trained classifier checkpoint (default: the FedAvg model's final_model.pt).",
+    )
     parser.add_argument("--architecture", type=str, default="resnet18", choices=["resnet18", "resnet152"])
     parser.add_argument("--dropout-rate", type=float, default=0.1)
     parser.add_argument("--device", type=str, default="cpu")
@@ -156,7 +169,6 @@ def main() -> None:
     model, captured = load_model_with_hook(args.checkpoint, args.architecture, args.dropout_rate, args.device)
 
     annotations = pd.read_csv(args.annotations)
-    annotations["dataset"] = annotations["image_path"].astype(str).str.split("/", n=1).str[0]
 
     for client in CLIENTS:
         df = annotations[annotations["dataset"] == client]
