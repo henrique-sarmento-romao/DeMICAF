@@ -12,15 +12,18 @@ features — see ``scripts/extract_classifier_features.py``) and ``selfclean``
 (pretrained-ViT off-topic-sample score, no self-supervised training). ``demicaf_prior``
 and ``gen`` (P2) are not implemented — not needed for the target table.
 
-Reference/test split: compliant images of the three client datasets (CheXpert is the
-excluded prior) are split 50/50 per client dataset into a reference split (used only
-to fit the two Mahalanobis-distance methods' reference Gaussians) and a test split;
-all non-compliant images go to the test split. Repeated over multiple seeds.
+Reference/eval pool: every compliant image of the three client datasets (CheXpert is
+the excluded prior) is used both to fit the reference statistics (Mahalanobis
+mean/covariance, KNN reference bank) and as part of the scored evaluation pool, along
+with every non-compliant image — no held-out split. This is safe for the
+summary-statistic scorers (a single point's influence on a mean/covariance is minor),
+but ``score_knn`` does literal nearest-neighbour lookup, so it explicitly excludes each
+query's own reference-bank entry to avoid trivial zero-distance self-matches.
 
 Typical usage (run as a module so ``scripts.baseline`` is importable)::
 
     uv run python -m scripts.benchmarking
-    uv run python -m scripts.benchmarking --methods niqe brisque --n-seeds 1 --n-boot 100
+    uv run python -m scripts.benchmarking --methods niqe brisque --n-boot 100
     uv run python -m scripts.benchmarking --resume
 """
 
@@ -39,7 +42,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pyiqa
-from sklearn.model_selection import train_test_split
 from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import Dataset as TorchDataset
 from tqdm import tqdm
@@ -99,7 +101,10 @@ KNN_K = 10
 
 TPR_TARGET = 0.95
 N_BOOT_DEFAULT = 1000
-N_SEEDS_DEFAULT = 3
+#: With no reference/eval split, every seed scores the identical pool — extra seeds
+#: only add more pooled bootstrap draws (see stratified_bootstrap), which n_boot
+#: already controls directly. Kept as a CLI knob for anyone who wants that anyway.
+N_SEEDS_DEFAULT = 1
 SEED_BASE = 0
 
 FEATURES_ROOT = get_results_root() / "features" / "100k"
@@ -108,9 +113,8 @@ FEATURES_ROOT = get_results_root() / "features" / "100k"
 
 
 def load_annotations(annotations_path: Path) -> pd.DataFrame:
-    """Read the annotation CSV, tag each row with its dataset, and restrict to the clients."""
+    """Read the annotation CSV and restrict to the three client datasets (CheXpert prior excluded)."""
     df = pd.read_csv(annotations_path)
-    df["dataset"] = df["image_path"].astype(str).str.split("/", n=1).str[0]
     df = df[df["dataset"].isin(CLIENTS)].reset_index(drop=True)
     df["compliant"] = df["compliance"].astype(str).str.strip().str.lower() == "compliant"
     return df
@@ -118,27 +122,20 @@ def load_annotations(annotations_path: Path) -> pd.DataFrame:
 
 @dataclass
 class Split:
-    """One seed's reference/test partition of the client-pooled annotations."""
+    """Reference bank (all compliant images) and the full evaluation pool, for one seed's bootstrap draws."""
 
     seed: int
-    reference_ids: dict[str, np.ndarray]  # client -> compliant image_paths in the reference split
-    test_df: pd.DataFrame  # test-compliant + all non-compliant, all clients pooled
+    reference_ids: dict[str, np.ndarray]  # client -> all compliant image_paths
+    test_df: pd.DataFrame  # every client image, compliant + non-compliant
 
 
 def build_split(df: pd.DataFrame, seed: int) -> Split:
-    """Split compliant client images 50/50 per client dataset; non-compliant images all go to test."""
+    """Build the reference bank (every compliant image per client) and evaluation pool (every image)."""
     compliant = df[df["compliant"]]
-    non_compliant = df[~df["compliant"]]
-
-    reference_ids: dict[str, np.ndarray] = {}
-    test_compliant_frames = []
-    for client, group in compliant.groupby("dataset", sort=False):
-        ref_group, test_group = train_test_split(group, test_size=0.5, random_state=seed)
-        reference_ids[client] = ref_group["image_path"].to_numpy(dtype=str)
-        test_compliant_frames.append(test_group)
-
-    test_df = pd.concat([*test_compliant_frames, non_compliant], ignore_index=True)
-    return Split(seed=seed, reference_ids=reference_ids, test_df=test_df)
+    reference_ids = {
+        client: group["image_path"].to_numpy(dtype=str) for client, group in compliant.groupby("dataset", sort=False)
+    }
+    return Split(seed=seed, reference_ids=reference_ids, test_df=df)
 
 
 # ── DeMICAF / DeepClean (SupCon Mahalanobis) scorers ─────────────────────────
@@ -262,17 +259,29 @@ def score_knn(
     ``client_feats`` must already be L2-normalised (see :func:`_l2_normalize_bank`) —
     both the reference bank and the test points need to be on the unit hypersphere
     for this to match the Sun et al. 2022 KNN-OOD formulation.
+
+    The reference bank is every compliant image, and every compliant image is also
+    scored (see ``build_split``), so a compliant query's own entry would otherwise be
+    its nearest neighbour at distance 0. Each query fetches ``k + 1`` neighbours and
+    drops its own reference-bank entry (matched by image id, not by distance) before
+    taking the k-th of what remains.
     """
     pooled_ref = _pooled_reference_features(split, client_feats)
-    nn_model = NearestNeighbors(n_neighbors=k).fit(pooled_ref)
+    pooled_ref_ids = np.concatenate([split.reference_ids[client] for client in CLIENTS])
+    self_position = {image_id: position for position, image_id in enumerate(pooled_ref_ids)}
+    nn_model = NearestNeighbors(n_neighbors=k + 1).fit(pooled_ref)
 
     scores: dict[str, float] = {}
     for client, group in split.test_df.groupby("dataset", sort=False):
         ids = group["image_path"].to_numpy(dtype=str)
         points = _select_features(client_feats[client], ids)
-        distances, _ = nn_model.kneighbors(points)
-        kth_distance = distances[:, -1]
-        scores.update(dict(zip(ids, kth_distance, strict=True)))
+        distances, indices = nn_model.kneighbors(points)
+
+        for image_id, row_distances, row_indices in zip(ids, distances, indices, strict=True):
+            position = self_position.get(image_id)
+            if position is not None:
+                row_distances = row_distances[row_indices != position]
+            scores[image_id] = row_distances[k - 1]
     return scores
 
 
@@ -518,6 +527,11 @@ def evaluate_all(
     """Per (method, cause, metric): mean point estimate over seeds + a seed-pooled bootstrap CI."""
     rows: list[dict[str, Any]] = []
     cause_levels: list[tuple[str, str | None]] = [*CAUSE_COLUMN_MAP.items(), ("aggregate", None)]
+    # Dataset-wide prevalence denominator — every client image, not just the images in
+    # a given cause's cause-vs-compliant comparison subset (a cause-c count divided by
+    # that subset's own size overstates prevalence, since it excludes every
+    # non-compliant image whose cause is something else).
+    n_total = len(next(iter(splits.values())).test_df)
 
     for method in methods:
         sign = 1.0 if ORIENTATION[method] == "asis" else -1.0
@@ -551,7 +565,7 @@ def evaluate_all(
 
             n_pos = round(np.mean(n_pos_list))
             n_neg = round(np.mean(n_neg_list))
-            prevalence = n_pos / (n_pos + n_neg) if (n_pos + n_neg) else np.nan
+            prevalence = n_pos / n_total if n_total else np.nan
             low_n = n_pos < LOW_N_THRESHOLD
 
             for metric_name in METRIC_FNS:
@@ -790,7 +804,12 @@ def parse_args() -> argparse.Namespace:
         default=get_results_root() / "per_cause",
         help="Directory with classifier_features_{client}.npz from extract_classifier_features.py.",
     )
-    parser.add_argument("--n-seeds", type=int, default=N_SEEDS_DEFAULT)
+    parser.add_argument(
+        "--n-seeds",
+        type=int,
+        default=N_SEEDS_DEFAULT,
+        help="Extra bootstrap-RNG seeds to pool (there's no reference/eval split left to vary — see module docstring).",
+    )
     parser.add_argument("--n-boot", type=int, default=N_BOOT_DEFAULT)
     parser.add_argument(
         "--methods",
