@@ -480,7 +480,10 @@ def compute_gen(probs_dir: Path, cache_path: Path, *, resume: bool) -> dict[str,
     for client in CLIENTS:
         names, probs = load_features(probs_dir / f"classifier_probs_{client}.npz")
         gen_scores = _generalized_entropy(probs)
-        scores.update(dict(zip(names, gen_scores.tolist(), strict=True)))
+        # names are bank-keyed ("{client}/{image_path}"); strip back to the bare
+        # image_path so this matches the other scorers' cache/lookup convention.
+        image_paths = [name[len(f"{client}/") :] for name in names]
+        scores.update(dict(zip(image_paths, gen_scores.tolist(), strict=True)))
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"image_path": list(scores.keys()), "score": list(scores.values())}).to_csv(cache_path, index=False)
